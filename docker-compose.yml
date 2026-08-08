@@ -1,0 +1,74 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    command: ['--bind_ip_all']
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  app:
+    build:
+      context: .
+      args:
+        # Set to false for a chat-only image without the agent CLIs.
+        INSTALL_HARNESSES: ${INSTALL_HARNESSES:-true}
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    ports:
+      - '${PORT:-4000}:4000'
+
+    # Runs as your own uid so the read-only credential mounts below are
+    # readable. Override with TEAMAGENTS_UID/GID, or drop to the image's own
+    # user (10001) if you are not mounting host credentials.
+    user: '${TEAMAGENTS_UID:-1000}:${TEAMAGENTS_GID:-1000}'
+
+    environment:
+      MONGODB_URI: mongodb://mongo:27017/teamagents
+      # The server also serves the web app, so the browser sees one origin.
+      # Deliberately its own variable: a development .env commonly sets
+      # WEB_ORIGIN to the Vite port, which is not how the container is reached.
+      WEB_ORIGIN: ${TEAMAGENTS_WEB_ORIGIN:-http://localhost:4000}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      TEAMAGENTS_SECRET: ${TEAMAGENTS_SECRET:?set TEAMAGENTS_SECRET in .env}
+      # Where to read harness logins from; see the mounts below.
+      HARNESS_CREDENTIALS_DIR: /host-credentials
+      OPENCODE_MODEL: ${OPENCODE_MODEL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      SHARE_AGENT_CACHES: ${SHARE_AGENT_CACHES:-true}
+
+    volumes:
+      # Uploads, agent sandboxes, and the shared harness caches. Sandboxes are
+      # meant to outlive the container, so this must be a real volume.
+      - app-data:/app/data
+
+      # The operator's harness logins, mirrored at the paths the seeder expects
+      # and mounted read-only — each sandbox gets its own writable copy, so the
+      # container never writes back to your real credentials. Missing
+      # directories simply mount empty and that harness falls back to an API
+      # key. Delete these lines if you authenticate with API keys only.
+      - ${HOME}/.claude:/host-credentials/.claude:ro
+      - ${HOME}/.codex:/host-credentials/.codex:ro
+      - ${HOME}/.config/opencode:/host-credentials/.config/opencode:ro
+      - ${HOME}/.local/share/opencode:/host-credentials/.local/share/opencode:ro
+      - ${HOME}/.cache/opencode:/host-credentials/.cache/opencode:ro
+
+    security_opt:
+      # bubblewrap creates user namespaces and mounts inside them, which
+      # Docker's default seccomp and AppArmor profiles block. Without this the
+      # sandbox cannot start and agents will not run. Neither option grants the
+      # container root on the host.
+      - seccomp:unconfined
+      - apparmor:unconfined
+
+volumes:
+  mongo-data:
+  app-data:

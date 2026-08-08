@@ -1,0 +1,19 @@
+node_modules/
+dist/
+build/
+*.log
+.env
+.env.local
+.DS_Store
+
+# Runtime data: uploads, sandboxes, mongo data
+data/
+!data/.gitkeep
+
+# Test artifacts
+coverage/
+playwright-report/
+test-results/
+.vite/
+
+Task.md

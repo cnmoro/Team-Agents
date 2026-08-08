@@ -1,0 +1,206 @@
+import { expect, test } from '@playwright/test';
+import { apiAs, createUser, login, messageText, openConversation, type TestUser } from './helpers.js';
+
+/**
+ * These exercise the real agent stack: a bubblewrap sandbox is provisioned, a
+ * harness CLI is spawned, and a model provider is called. They need the
+ * harnesses installed and authenticated on the host, so they are skipped
+ * automatically when none is available.
+ */
+test.describe('agents', () => {
+  test.describe.configure({ mode: 'serial', timeout: 600_000 });
+
+  let ada: TestUser;
+  let alan: TestUser;
+  let hasHarness = false;
+
+  test.beforeAll(async () => {
+    ada = await createUser('ada');
+    alan = await createUser('alan');
+    const status = await apiAs<{ harnesses: Array<{ available: boolean }> }>(
+      ada,
+      'GET',
+      '/api/system/status',
+    );
+    hasHarness = status.harnesses.some((harness) => harness.available);
+  });
+
+  /**
+   * A conversation of its own per test. Creating a DM between the same two
+   * people is idempotent, so reusing one would leave the previous test's agent
+   * cards in the thread and make `.first()` ambiguous.
+   */
+  async function freshConversation(prefix: string): Promise<string> {
+    const name = `${prefix} ${Date.now()}`;
+    await apiAs(ada, 'POST', '/api/conversations', {
+      type: 'group',
+      memberIds: [alan.id],
+      name,
+    });
+    return name;
+  }
+
+  test('the agent dialog lists harnesses and repositories', async ({ page }) => {
+    await apiAs(ada, 'POST', '/api/conversations', { type: 'dm', memberIds: [alan.id] });
+    await login(page, ada);
+    await openConversation(page, alan.displayName);
+
+    await page.getByRole('button', { name: 'Run an agent' }).click();
+
+    await expect(page.getByText('Run an agent')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Claude Code' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Codex' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'OpenCode' })).toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'Agent prompt' })).toBeVisible();
+  });
+
+  test('typing @Agent opens the agent dialog', async ({ page }) => {
+    await apiAs(ada, 'POST', '/api/conversations', { type: 'dm', memberIds: [alan.id] });
+    await login(page, ada);
+    await openConversation(page, alan.displayName);
+
+    const composer = page.getByLabel('Message', { exact: true });
+    await composer.click();
+    await composer.pressSequentially('@Agent');
+    await page.locator('.ta-autocomplete-item').filter({ hasText: 'Agent' }).click();
+
+    await expect(page.getByRole('textbox', { name: 'Agent prompt' })).toBeVisible();
+  });
+
+  test('runs an agent, streams its trace, and erases the sandbox on close', async ({ page }) => {
+    test.skip(!hasHarness, 'No agent harness is installed on this host');
+
+    const name = await freshConversation('Trace');
+    await login(page, ada);
+    await openConversation(page, name);
+
+    await page.getByRole('button', { name: 'Run an agent' }).click();
+    await page
+      .getByRole('textbox', { name: 'Agent prompt' })
+      .fill('Without using any tools, reply with exactly: E2E-AGENT-OK');
+    await page.getByRole('button', { name: 'Start agent' }).click();
+
+    // The card appears immediately, before the sandbox is even ready.
+    const card = page.locator('.ta-agent-card').first();
+    await expect(card).toBeVisible({ timeout: 60_000 });
+
+    // The agent's answer arrives as a real message. Scoping to the message body
+    // matters: the prompt is echoed in the card title, so a bare text match would
+    // pass before the agent had done anything at all.
+    await expect(messageText(page, 'E2E-AGENT-OK').first()).toBeVisible({ timeout: 300_000 });
+    await expect(card.getByText('Ready')).toBeVisible({ timeout: 60_000 });
+
+    // The trace is off by default and lists typed events when opened.
+    await expect(page.locator('.ta-trace-row')).toHaveCount(0);
+    await card.getByRole('button', { name: 'Show trace' }).click();
+    await expect(page.locator('.ta-trace-row').first()).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator('.ta-trace-row')).not.toHaveCount(0);
+    await expect(card.getByText('turn_complete')).toBeVisible();
+
+    // Closing asks for confirmation, then wipes the sandbox.
+    await card.getByRole('button', { name: 'Close & erase sandbox' }).click();
+    await expect(page.getByText(/Close this agent and erase its sandbox\?/)).toBeVisible();
+    await page.getByRole('button', { name: 'Erase sandbox', exact: true }).click();
+
+    await expect(card.getByText('Closed', { exact: true })).toBeVisible({ timeout: 60_000 });
+    // History survives the close: the trace is still readable afterwards.
+    await expect(messageText(page, 'E2E-AGENT-OK').first()).toBeVisible();
+  });
+
+  test('agent output renders inside the agent card, not as a chat message', async ({ page }) => {
+    test.skip(!hasHarness, 'No agent harness is installed on this host');
+
+    const name = await freshConversation('Inside');
+    await login(page, ada);
+    await openConversation(page, name);
+
+    await page.getByRole('button', { name: 'Run an agent' }).click();
+    await page
+      .getByRole('textbox', { name: 'Agent prompt' })
+      .fill('Without using any tools, reply with exactly: INSIDE-THE-CARD');
+    await page.getByRole('button', { name: 'Start agent' }).click();
+
+    const card = page.locator('.ta-agent-card').first();
+    const reply = messageText(page, 'INSIDE-THE-CARD').first();
+    await expect(reply).toBeVisible({ timeout: 300_000 });
+
+    // The reply lives inside the card's own thread rather than beside it.
+    await expect(card.locator('.ta-agent-thread-body')).toContainText('INSIDE-THE-CARD');
+    const insideCard = await reply.evaluate((element) =>
+      Boolean(element.closest('.ta-agent-card')),
+    );
+    expect(insideCard).toBe(true);
+
+    // And it is not rendered as a chat bubble from another member.
+    const asBubble = await reply.evaluate((element) =>
+      Boolean(element.closest('[data-sender][data-variant][data-density]')),
+    );
+    expect(asBubble).toBe(false);
+  });
+
+  test('an open session can be closed from the settings screen', async ({ page }) => {
+    test.skip(!hasHarness, 'No agent harness is installed on this host');
+
+    const name = await freshConversation('Settings');
+    await login(page, ada);
+    await openConversation(page, name);
+
+    await page.getByRole('button', { name: 'Run an agent' }).click();
+    await page
+      .getByRole('textbox', { name: 'Agent prompt' })
+      .fill('Without using any tools, reply with exactly: OK');
+    await page.getByRole('button', { name: 'Start agent' }).click();
+    await expect(page.locator('.ta-agent-card').first()).toBeVisible({ timeout: 60_000 });
+
+    // Every session is reachable from settings, which is how a session holding
+    // a repository open can be found and released.
+    await page.getByRole('button', { name: 'Account menu' }).click();
+    await page.getByText('Repositories & credentials').first().click();
+    await page.getByRole('button', { name: 'Agents', exact: true }).click();
+
+    const row = page.locator('[data-session-row]').filter({ hasText: /in Settings \d+/ }).first();
+    await expect(row).toBeVisible({ timeout: 30_000 });
+    await row.getByRole('button', { name: 'Close & erase' }).first().click();
+    await page.getByRole('button', { name: 'Erase', exact: true }).click();
+
+    await expect(page.getByText(/No open agent sessions|in Settings/)).toBeVisible({
+      timeout: 60_000,
+    });
+  });
+
+  test('a follow-up prompt reuses the same sandbox and session', async ({ page }) => {
+    test.skip(!hasHarness, 'No agent harness is installed on this host');
+
+    const name = await freshConversation('Resume');
+    await login(page, ada);
+    await openConversation(page, name);
+
+    await page.getByRole('button', { name: 'Run an agent' }).click();
+    await page
+      .getByRole('textbox', { name: 'Agent prompt' })
+      .fill('Remember the word PLATYPUS. Reply with exactly: STORED');
+    await page.getByRole('button', { name: 'Start agent' }).click();
+
+    const card = page.locator('.ta-agent-card').first();
+    await expect(messageText(page, 'STORED').first()).toBeVisible({ timeout: 300_000 });
+
+    const sandboxPathOf = async (): Promise<string | null> =>
+      (/Sandbox: (\S+)/.exec(await card.innerText())?.[1] ?? null);
+
+    const firstSandbox = await sandboxPathOf();
+    expect(firstSandbox).toBeTruthy();
+
+    // Route the next message to the agent instead of to the conversation.
+    await page.getByRole('combobox', { name: /Send to/ }).click();
+    await page.getByRole('option', { name: /Remember the word/ }).click();
+
+    await page.getByLabel('Message', { exact: true }).fill('Which word did I ask you to remember?');
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+
+    // The agent still remembers, which is only possible if its own session was
+    // resumed rather than restarted.
+    await expect(messageText(page, /PLATYPUS/).last()).toBeVisible({ timeout: 300_000 });
+    await expect(card.getByText(/2 turns/)).toBeVisible({ timeout: 60_000 });
+    expect(await sandboxPathOf()).toBe(firstSandbox);
+  });
+});

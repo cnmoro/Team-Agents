@@ -1,0 +1,476 @@
+/*
+ * Astryx loads into cascade layers (reset -> astryx-base -> astryx-theme).
+ * The import order below is load-bearing, and every rule this app adds is
+ * assigned to a later layer: unlayered CSS beats layered CSS at any
+ * specificity, so a stray global rule would silently override components.
+ */
+@import '@astryxdesign/core/reset.css';
+@import '@astryxdesign/core/astryx.css';
+@import '@astryxdesign/theme-neutral/theme.css';
+
+@layer reset, astryx-base, astryx-theme, app;
+
+@layer app {
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    background-color: var(--color-background-body);
+    color: var(--color-text-primary);
+    font-family: var(--font-family-body);
+    overflow: hidden;
+  }
+
+  /* --- App shell ------------------------------------------------------- */
+
+  .ta-shell {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    height: 100dvh;
+    background-color: var(--color-background-body);
+  }
+
+  .ta-sidebar {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    border-inline-end: var(--border-width) solid var(--color-border);
+    background-color: var(--color-background-surface);
+  }
+
+  .ta-main {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  @media (max-width: 900px) {
+    .ta-shell {
+      grid-template-columns: 1fr;
+    }
+    /* On narrow screens the two panes swap rather than shrink. */
+    .ta-shell[data-pane='conversation'] .ta-sidebar,
+    .ta-shell[data-pane='sidebar'] .ta-main {
+      display: none;
+    }
+  }
+
+  /* --- Conversation rows ------------------------------------------------ */
+
+  .ta-conversation-row {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-3);
+    width: 100%;
+    padding: var(--spacing-2) var(--spacing-3);
+    border: none;
+    border-radius: var(--radius-element);
+    background: transparent;
+    color: inherit;
+    text-align: start;
+    cursor: pointer;
+    font: inherit;
+  }
+
+  .ta-conversation-row:hover {
+    background-color: var(--color-overlay-hover);
+  }
+
+  .ta-conversation-row[data-selected='true'] {
+    background-color: var(--color-background-muted);
+    box-shadow: var(--shadow-inset-selected);
+  }
+
+  /* The unread treatment is deliberately loud: bold title, accent dot, and a
+     count badge, so an unread chat is unmistakable at a glance. */
+  .ta-conversation-row[data-unread='true'] .ta-conversation-title {
+    font-weight: var(--font-weight-bold);
+    color: var(--color-text-primary);
+  }
+
+  .ta-conversation-body {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .ta-truncate {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* --- Messages --------------------------------------------------------- */
+
+  .ta-message-row {
+    position: relative;
+    border-radius: var(--radius-element);
+    padding-inline: var(--spacing-1);
+    transition: background-color var(--duration-fast) var(--ease-standard);
+  }
+
+  .ta-message-row[data-selectable='true'] {
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .ta-message-row[data-selected='true'] {
+    background-color: var(--color-background-blue);
+    box-shadow: inset 0 0 0 var(--border-width) var(--color-border-blue);
+  }
+
+  .ta-message-row[data-mentioned='true']::before {
+    content: '';
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    width: 3px;
+    border-radius: var(--radius-full);
+    background-color: var(--color-accent);
+  }
+
+  /* Message actions stay out of the way until the row is hovered or the
+     control itself takes focus, so the transcript reads cleanly. */
+  .ta-message-actions {
+    opacity: 0;
+    transition: opacity var(--duration-fast) var(--ease-standard);
+  }
+
+  .ta-message-row:hover .ta-message-actions,
+  .ta-message-actions:focus-within {
+    opacity: 1;
+  }
+
+  .ta-mention {
+    padding: 0 var(--spacing-1);
+    border-radius: var(--radius-inner);
+    background-color: var(--color-background-blue);
+    color: var(--color-text-blue);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .ta-mention[data-self='true'] {
+    background-color: var(--color-accent);
+    color: var(--color-on-accent);
+  }
+
+  /* --- Markdown --------------------------------------------------------- */
+
+  /*
+   * Hug the text rather than reserving a prose measure.
+   *
+   * Markdown is built for documents and reserves a comfortable line length, so
+   * a two-word message would otherwise widen the bubble to several hundred
+   * pixels — visible as a bubble far wider than anything in it. `max-content`
+   * makes the intrinsic contribution the text's own width, while `max-width`
+   * still lets a long paragraph wrap at the bubble's limit.
+   */
+  .ta-markdown {
+    width: max-content;
+    max-width: 100%;
+  }
+
+  /* Message bodies are short; markdown's default block spacing is tuned for
+     documents and leaves too much air inside a bubble. */
+  .ta-markdown > :first-child {
+    margin-block-start: 0;
+  }
+
+  .ta-markdown > :last-child {
+    margin-block-end: 0;
+  }
+
+  .ta-markdown p {
+    margin-block: var(--spacing-1);
+  }
+
+  .ta-markdown ul,
+  .ta-markdown ol {
+    margin-block: var(--spacing-1);
+    padding-inline-start: var(--spacing-5);
+  }
+
+  .ta-markdown pre {
+    margin-block: var(--spacing-1);
+  }
+
+  .ta-markdown a {
+    color: var(--color-text-accent);
+    text-decoration: underline;
+  }
+
+  /* --- Code blocks ------------------------------------------------------ */
+
+  .ta-code {
+    position: relative;
+    border: var(--border-width) solid var(--color-border);
+    border-radius: var(--radius-container);
+    overflow: hidden;
+    background-color: var(--color-background-card);
+    margin-block: var(--spacing-1);
+    /* Long lines scroll inside the block instead of widening the bubble. */
+    max-width: min(680px, 100%);
+  }
+
+  .ta-code-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-2);
+    padding: var(--spacing-1) var(--spacing-1) var(--spacing-1) var(--spacing-3);
+    border-bottom: var(--border-width) solid var(--color-border);
+    background-color: var(--color-background-muted);
+  }
+
+  .ta-code-body {
+    overflow-x: auto;
+    max-height: 420px;
+    overflow-y: auto;
+  }
+
+  .ta-code-body pre {
+    margin: 0;
+    padding: var(--spacing-3);
+    font-family: var(--font-family-code);
+    font-size: var(--font-size-sm);
+    line-height: 1.55;
+  }
+
+  .ta-code-body code {
+    font-family: inherit;
+  }
+
+  /* --- Attachments ------------------------------------------------------ */
+
+  /*
+   * Images carry width/height attributes already scaled to fit this box, which
+   * is what stops a large screenshot from widening the bubble: a replaced
+   * element contributes its intrinsic size when the bubble sizes itself, and
+   * `max-width` alone does not change that contribution.
+   */
+  .ta-image {
+    max-width: min(420px, 100%);
+    max-height: 320px;
+    /*
+     * No `width` here on purpose. The scaled `width` attribute acts as a
+     * presentational hint, and declaring `width: auto` would override it —
+     * sending the bubble back to sizing itself from the picture's full
+     * resolution. `height: auto` keeps the aspect ratio when `max-width`
+     * shrinks the image on a narrow screen.
+     */
+    height: auto;
+    border-radius: var(--radius-container);
+    border: var(--border-width) solid var(--color-border);
+    display: block;
+    cursor: zoom-in;
+    object-fit: contain;
+  }
+
+  /* --- Composer --------------------------------------------------------- */
+
+  .ta-composer {
+    border-top: var(--border-width) solid var(--color-border);
+    background-color: var(--color-background-surface);
+    padding: var(--spacing-3);
+  }
+
+  .ta-composer-input {
+    width: 100%;
+    min-height: 44px;
+    max-height: 220px;
+    resize: none;
+    border: var(--border-width) solid var(--color-border);
+    border-radius: var(--radius-container);
+    padding: var(--spacing-3);
+    font: inherit;
+    font-family: var(--font-family-body);
+    color: var(--color-text-primary);
+    background-color: var(--color-background-card);
+  }
+
+  .ta-composer-input:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: -1px;
+  }
+
+  .ta-composer-code {
+    width: 100%;
+    min-height: 120px;
+    resize: vertical;
+    border: var(--border-width) solid var(--color-border);
+    border-radius: var(--radius-container);
+    padding: var(--spacing-3);
+    font-family: var(--font-family-code);
+    font-size: var(--font-size-sm);
+    color: var(--color-text-primary);
+    background-color: var(--color-background-card);
+  }
+
+  /* The mention/agent popup is anchored to the composer, above it. */
+  .ta-autocomplete {
+    position: absolute;
+    bottom: calc(100% + var(--spacing-2));
+    inset-inline-start: 0;
+    z-index: 30;
+    width: min(420px, 100%);
+    max-height: 280px;
+    overflow-y: auto;
+    padding: var(--spacing-1);
+    border: var(--border-width) solid var(--color-border);
+    border-radius: var(--radius-container);
+    background-color: var(--color-background-popover);
+    box-shadow: var(--shadow-high);
+  }
+
+  .ta-autocomplete-item {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-2);
+    width: 100%;
+    padding: var(--spacing-2);
+    border: none;
+    border-radius: var(--radius-element);
+    background: transparent;
+    color: inherit;
+    text-align: start;
+    cursor: pointer;
+    font: inherit;
+  }
+
+  .ta-autocomplete-item[data-active='true'],
+  .ta-autocomplete-item:hover {
+    background-color: var(--color-overlay-hover);
+  }
+
+  /* --- Agent cards ------------------------------------------------------ */
+
+  .ta-agent-card {
+    border: var(--border-width) solid var(--color-border-purple);
+    border-radius: var(--radius-container);
+    background-color: var(--color-background-purple);
+    padding: var(--spacing-4);
+    /* Wide enough to hold the agent's own conversation and its trace. */
+    max-width: min(860px, 100%);
+  }
+
+  /* The agent's messages are indented inside the card so the thread reads as
+     one unit rather than as separate chat entries. */
+  .ta-agent-thread-body {
+    padding-inline-start: var(--spacing-6);
+  }
+
+  /*
+   * Paired with the card's purple surface. `--color-text-purple` is the theme's
+   * designed foreground for that background in both light and dark mode, which
+   * the generic secondary/disabled text colours are not.
+   */
+  .ta-agent-meta {
+    color: var(--color-text-purple);
+    font-family: var(--font-family-code);
+    font-size: var(--font-size-2xs);
+    overflow-wrap: anywhere;
+  }
+
+  /* --- Agent trace ------------------------------------------------------ */
+
+  .ta-trace {
+    max-height: 340px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-radius: var(--radius-element);
+    border: var(--border-width) solid var(--color-border);
+    background-color: var(--color-background-card);
+  }
+
+  .ta-trace-row {
+    display: grid;
+    grid-template-columns: minmax(0, max-content) minmax(0, 1fr) 20px;
+    align-items: start;
+    gap: var(--spacing-2);
+    padding: var(--spacing-1) var(--spacing-2);
+    border-bottom: var(--border-width) solid var(--color-border);
+  }
+
+  .ta-trace-row:last-child {
+    border-bottom: none;
+  }
+
+  .ta-trace-row[data-clickable='true'] {
+    cursor: pointer;
+  }
+
+  .ta-trace-row[data-clickable='true']:hover {
+    background-color: var(--color-overlay-hover);
+  }
+
+  .ta-trace-summary {
+    min-width: 0;
+    font-family: var(--font-family-code);
+    font-size: var(--font-size-2xs);
+    color: var(--color-text-primary);
+    overflow-wrap: anywhere;
+    /* Two lines is enough to identify a step; the rest is one click away. */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .ta-trace-outcome {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 16px;
+  }
+
+  .ta-trace-detail {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    margin: 0;
+    padding: var(--spacing-2);
+    font-family: var(--font-family-code);
+    font-size: var(--font-size-2xs);
+    color: var(--color-text-secondary);
+    background-color: var(--color-background-muted);
+    border-radius: var(--radius-inner);
+    max-height: 320px;
+    overflow-y: auto;
+  }
+
+  /* --- Misc ------------------------------------------------------------- */
+
+  .ta-centered {
+    display: grid;
+    place-items: center;
+    height: 100dvh;
+    padding: var(--spacing-4);
+  }
+
+  .ta-lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: grid;
+    place-items: center;
+    padding: var(--spacing-8);
+    background-color: rgb(0 0 0 / 0.72);
+    border: none;
+    cursor: zoom-out;
+  }
+
+  .ta-lightbox img {
+    max-width: 100%;
+    max-height: 100%;
+    border-radius: var(--radius-container);
+  }
+
+  .ta-scroll {
+    overflow-y: auto;
+    min-height: 0;
+  }
+}

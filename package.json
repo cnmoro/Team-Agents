@@ -1,0 +1,31 @@
+{
+  "name": "teamagents",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Team chat with embedded AI coding agents (Claude Code, Codex, OpenCode) in persistent bubblewrap sandboxes",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "npm run build -w @teamagents/shared && npm run build -w @teamagents/server && npm run build -w @teamagents/web",
+    "dev": "concurrently -n server,web -c cyan,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "npm run dev -w @teamagents/server",
+    "dev:web": "npm run dev -w @teamagents/web",
+    "start": "node apps/server/dist/index.js",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run typecheck",
+    "test": "npm run test -w @teamagents/server",
+    "test:e2e": "npm run test:e2e -w @teamagents/web",
+    "seed": "npm run seed -w @teamagents/server",
+    "doctor": "npm run doctor -w @teamagents/server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.7.3"
+  }
+}

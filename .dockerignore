@@ -1,0 +1,21 @@
+node_modules
+**/node_modules
+**/dist
+**/build
+
+# Runtime state: sandboxes can be gigabytes, and none of it belongs in an image.
+data
+
+.git
+.env
+.env.local
+
+# Test and tooling output
+coverage
+playwright-report
+test-results
+**/.vite
+*.log
+
+# Docs and local notes
+Task.md
