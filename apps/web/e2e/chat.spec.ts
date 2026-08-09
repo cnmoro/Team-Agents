@@ -363,4 +363,21 @@ test.describe('chat', () => {
       .poll(() => page.evaluate(() => document.documentElement.dataset.theme))
       .not.toBe(before);
   });
+
+  test('the sidebar does not overflow the viewport on a narrow phone width', async ({ page }) => {
+    // Below the shell's 900px breakpoint the layout collapses to a single
+    // pane. Without an explicit min-width on the grid item, the sidebar's
+    // header rows (avatar/name plus three icon buttons, "Chats" plus two
+    // more icon buttons) refuse to shrink below their intrinsic content
+    // width and blow out the whole page into horizontal scroll — the kind
+    // of thing that only shows up by actually measuring a real narrow
+    // viewport, not by eyeballing a desktop window.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await login(page, ada);
+
+    const overflowPx = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflowPx).toBeLessThanOrEqual(0);
+  });
 });

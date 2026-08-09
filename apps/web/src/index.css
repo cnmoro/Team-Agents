@@ -37,6 +37,7 @@
   .ta-sidebar {
     display: flex;
     flex-direction: column;
+    min-width: 0;
     min-height: 0;
     border-inline-end: var(--border-width) solid var(--color-border);
     background-color: var(--color-background-surface);
