@@ -166,7 +166,7 @@ export function AgentStarterDialog({
               <VStack gap={1} height={200}>
                 {repositories.map((repository) => (
                   <Card key={repository.id} padding={2} variant="muted">
-                    <HStack gap={3} vAlign="center" hAlign="between">
+                    <HStack gap={3} vAlign="center" hAlign="between" wrap="wrap">
                       <CheckboxInput
                         label={repository.name}
                         description={repository.url}

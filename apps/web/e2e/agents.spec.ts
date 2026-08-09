@@ -54,6 +54,43 @@ test.describe('agents', () => {
     await expect(page.getByRole('textbox', { name: 'Agent prompt' })).toBeVisible();
   });
 
+  test('the repository list in the agent dialog does not clip its badges on a narrow phone width', async ({
+    page,
+  }) => {
+    // Regression guard: on a real 390px viewport the repository row's
+    // protocol/credential badges (an HStack laid out `hAlign="between"`
+    // against the checkbox label+description) used to get pushed past the
+    // card's right edge and clipped by the card's `overflow: clip`, hiding
+    // the "no credential" warning badge entirely — a real trust-signal, not
+    // just cosmetic. Fixed by adding `wrap="wrap"` to that HStack (the same
+    // pattern already used for the identical shape in AgentCard.tsx), so on
+    // narrow widths the badges drop to their own line instead of vanishing.
+    const repoName = `mobile-badge-repo-${Date.now()}`;
+    await apiAs(ada, 'POST', '/api/repositories', {
+      name: repoName,
+      url: 'https://example.invalid/mobile-badge-repo.git',
+    });
+    await apiAs(ada, 'POST', '/api/conversations', { type: 'dm', memberIds: [alan.id] });
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await login(page, ada);
+    await openConversation(page, alan.displayName);
+
+    await page.getByRole('button', { name: 'Run an agent' }).click();
+    const checkbox = page.getByRole('checkbox', { name: new RegExp(repoName) });
+    await expect(checkbox).toBeVisible();
+
+    // Scope to this repository's own card — other repositories left over from
+    // other tests/runs may also show a "no credential" badge.
+    const repoCard = page.locator('.astryx-card', { has: checkbox });
+    const badge = repoCard.getByText('no credential', { exact: true });
+    await expect(badge).toBeVisible();
+
+    const box = await badge.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+  });
+
   test('typing @Agent opens the agent dialog', async ({ page }) => {
     await apiAs(ada, 'POST', '/api/conversations', { type: 'dm', memberIds: [alan.id] });
     await login(page, ada);
