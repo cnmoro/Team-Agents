@@ -137,6 +137,13 @@ test.describe('chat', () => {
 
     const row = conversationRow(alanPage, ada.displayName);
     await expect(row).toHaveAttribute('data-unread', 'true', { timeout: 20_000 });
+    // The sidebar preview has no markdown renderer, so a mention must show as
+    // plain "@Name" there rather than leaking the composer's wire syntax
+    // (`@[Display Name](userId)`) straight into the row. Ada is the author
+    // here, so her sidebar prefix ("Ada: ...") wraps the mention of Alan.
+    await expect(row).toContainText(`@${alan.displayName} please look`);
+    await expect(row).not.toContainText('@[');
+
     await row.click();
     // The mention renders as a chip rather than raw markup.
     await expect(alanPage.locator('.ta-mention')).toBeVisible();

@@ -1,5 +1,5 @@
 import { Types } from 'mongoose';
-import type { ConversationSummary, MessageBlock, UserPublic } from '@teamagents/shared';
+import { stripMentionMarkup, type ConversationSummary, type MessageBlock, type UserPublic } from '@teamagents/shared';
 import { ConversationModel, type ConversationDoc } from '../models/conversation.js';
 import { MessageModel } from '../models/message.js';
 import { UserModel, toUserPublic } from '../models/user.js';
@@ -15,7 +15,7 @@ export function previewFromBlocks(blocks: MessageBlock[], authorName?: string): 
     else if (block.type === 'image') parts.push('[image]');
     else if (block.type === 'file') parts.push(`[${block.filename}]`);
   }
-  const text = parts.join(' ').replace(/\s+/g, ' ').trim().slice(0, 180);
+  const text = stripMentionMarkup(parts.join(' ')).replace(/\s+/g, ' ').trim().slice(0, 180);
   return authorName ? `${authorName}: ${text}` : text;
 }
 

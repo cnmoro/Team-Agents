@@ -8,14 +8,15 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import type {
-  AgentEvent,
-  AgentSession,
-  ConversationSummary,
-  MessageWithAuthor,
-  SendMessageInput,
-  StartAgentInput,
-  UserPublic,
+import {
+  stripMentionMarkup,
+  type AgentEvent,
+  type AgentSession,
+  type ConversationSummary,
+  type MessageWithAuthor,
+  type SendMessageInput,
+  type StartAgentInput,
+  type UserPublic,
 } from '@teamagents/shared';
 import { api } from '../lib/api.js';
 import { connectSocket, disconnectSocket, type AppSocket } from '../lib/socket.js';
@@ -285,18 +286,19 @@ export function ChatProvider({ children }: { children: ReactNode }): ReactNode {
   const notify = useCallback(
     (message: MessageWithAuthor, conversation: ConversationSummary) => {
       const author = message.authorUser?.displayName ?? 'Agent';
-      const preview = message.blocks
-        .map((block) =>
-          block.type === 'text'
-            ? block.text
-            : block.type === 'code'
-              ? `[${block.language} snippet]`
-              : block.type === 'image'
-                ? '[image]'
-                : `[${block.filename}]`,
-        )
-        .join(' ')
-        .slice(0, 180);
+      const preview = stripMentionMarkup(
+        message.blocks
+          .map((block) =>
+            block.type === 'text'
+              ? block.text
+              : block.type === 'code'
+                ? `[${block.language} snippet]`
+                : block.type === 'image'
+                  ? '[image]'
+                  : `[${block.filename}]`,
+          )
+          .join(' '),
+      ).slice(0, 180);
       pushNotification({
         id: message.id,
         conversationId: message.conversationId,

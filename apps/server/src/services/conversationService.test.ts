@@ -246,4 +246,19 @@ describe('previewFromBlocks', () => {
     expect(preview.length).toBeLessThanOrEqual(180);
     expect(previewFromBlocks([{ type: 'text', text: 'a\n\n   b' }])).toBe('a b');
   });
+
+  it('renders mentions as plain @Name instead of leaking the wire markup', () => {
+    // The composer writes mentions as `@[Display Name](userId)` — ordinary
+    // markdown link syntax meant for the full markdown renderer. The sidebar
+    // preview has no renderer, so it must fall back to plain text rather than
+    // showing the raw `@[Ada Lovelace](...)` syntax to the user.
+    expect(
+      previewFromBlocks([
+        { type: 'text', text: '@[Ada Lovelace](6a788ce246f49b06080d0625) can you check this?' },
+      ]),
+    ).toBe('@Ada Lovelace can you check this?');
+    expect(previewFromBlocks([{ type: 'text', text: 'ping @[Agent](agent) please' }])).toBe(
+      'ping @Agent please',
+    );
+  });
 });

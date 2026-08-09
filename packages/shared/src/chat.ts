@@ -74,6 +74,23 @@ export interface ImageBlock {
 
 export type MessageBlock = TextBlock | CodeBlock | FileBlock | ImageBlock;
 
+/**
+ * Wire format the composer writes for a mention: `@[Display Name](userId)` (or
+ * `(agent)` for an `@Agent` mention). Ordinary markdown link syntax, chosen so
+ * existing markdown renderers pass it through untouched until a dedicated
+ * plugin turns it into a chip.
+ *
+ * Anything that shows message text *outside* the full markdown renderer (chat
+ * notifications, sidebar previews, native OS notifications) needs to fall back
+ * to plain `@Display Name` instead of leaking this wire syntax verbatim.
+ */
+const MENTION_MARKUP_PATTERN = /@\[([^\]]+)\]\((?:[0-9a-fA-F]{24}|agent)\)/g;
+
+/** Rewrites `@[Name](id)` mention markup to plain `@Name` for non-markdown surfaces. */
+export function stripMentionMarkup(text: string): string {
+  return text.replace(MENTION_MARKUP_PATTERN, '@$1');
+}
+
 /** Languages offered in the composer's code-block picker. */
 export const CODE_LANGUAGES = [
   'bash',
