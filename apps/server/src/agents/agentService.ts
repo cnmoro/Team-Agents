@@ -6,6 +6,7 @@ import type {
   PromptAgentInput,
   StartAgentInput,
 } from '@teamagents/shared';
+import { stripMentionMarkup } from '@teamagents/shared';
 import { AgentEventModel } from '../models/agentEvent.js';
 import { AgentSessionModel, type AgentSessionDoc } from '../models/agentSession.js';
 import { MessageModel } from '../models/message.js';
@@ -340,7 +341,7 @@ export async function buildContextTranscript(
     const body = (message.blocks ?? [])
       .map((raw) => {
         const block = raw as { type: string; text?: string; language?: string; code?: string; filename?: string };
-        if (block.type === 'text') return block.text ?? '';
+        if (block.type === 'text') return stripMentionMarkup(block.text ?? '');
         if (block.type === 'code') return `\n\`\`\`${block.language ?? ''}\n${block.code ?? ''}\n\`\`\``;
         return `[attachment: ${block.filename ?? 'file'}]`;
       })
