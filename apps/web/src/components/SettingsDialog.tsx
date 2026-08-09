@@ -497,9 +497,9 @@ function AgentsPanel({
           {open.map((session) => (
             <Card key={session.id} padding={3} data-session-row={session.id}>
               <VStack gap={2}>
-                <HStack gap={3} vAlign="center" hAlign="between">
+                <HStack gap={3} vAlign="center" hAlign="between" wrap="wrap">
                   <VStack gap={0}>
-                    <HStack gap={2} vAlign="center">
+                    <HStack gap={2} vAlign="center" wrap="wrap">
                       <Text type="label" weight="semibold" maxLines={1}>
                         {session.title}
                       </Text>

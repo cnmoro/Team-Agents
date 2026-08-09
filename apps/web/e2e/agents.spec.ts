@@ -204,6 +204,58 @@ test.describe('agents', () => {
     });
   });
 
+  test('the Agents settings panel does not clip the "Close & erase" button on a narrow phone width', async ({
+    page,
+  }) => {
+    test.skip(!hasHarness, 'No agent harness is installed on this host');
+
+    // Regression guard: the Agents panel's session row was
+    // `<HStack hAlign="between">` with no `wrap`, same shape as the repo-badge
+    // bug fixed earlier. At 390px the title/badges didn't shrink, pushing the
+    // destructive "Close & erase" button off the card's right edge and past
+    // the dialog's own `overflow: hidden` — invisible and unreachable, so a
+    // user on a narrow phone had no way to close a stuck session from
+    // settings at all. Fixed by adding `wrap="wrap"` to that HStack (and the
+    // nested title/badge HStack), the same pattern used elsewhere.
+    const name = await freshConversation('NarrowAgents');
+    await login(page, ada);
+    await openConversation(page, name);
+
+    await page.getByRole('button', { name: 'Run an agent' }).click();
+    await page
+      .getByRole('textbox', { name: 'Agent prompt' })
+      .fill('Without using any tools, reply with exactly: OK');
+    await page.getByRole('button', { name: 'Start agent' }).click();
+    await expect(page.locator('.ta-agent-card').first()).toBeVisible({ timeout: 60_000 });
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    // Below the single-pane breakpoint the conversation covers the sidebar
+    // (and its settings button) entirely, so the mobile nav has to go back
+    // to the chat list first, same as a real thumb would.
+    const backButton = page.getByRole('button', { name: 'Back to chats' });
+    if (await backButton.isVisible().catch(() => false)) {
+      await backButton.click();
+    }
+    await page.getByRole('button', { name: 'Repositories & credentials' }).click();
+    await page.getByRole('button', { name: 'Agents', exact: true }).click();
+
+    const row = page.locator('[data-session-row]').filter({ hasText: new RegExp(`in ${name}`) }).first();
+    await expect(row).toBeVisible({ timeout: 30_000 });
+
+    const closeButton = row.getByRole('button', { name: 'Close & erase' }).first();
+    await expect(closeButton).toBeVisible();
+    const box = await closeButton.boundingBox();
+    expect(box).not.toBeNull();
+    // Fully inside the 390px viewport, not clipped off the right edge.
+    expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+
+    await closeButton.click();
+    await page.getByRole('button', { name: 'Erase', exact: true }).click();
+    await expect(page.getByText(/No open agent sessions|in NarrowAgents/)).toBeVisible({
+      timeout: 60_000,
+    });
+  });
+
   test('a follow-up prompt reuses the same sandbox and session', async ({ page }) => {
     test.skip(!hasHarness, 'No agent harness is installed on this host');
 
