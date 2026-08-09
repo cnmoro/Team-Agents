@@ -259,8 +259,7 @@ async function main() {
   await page.getByRole('button', { name: 'Done selecting' }).click();
 
   // 5. Repositories and credentials.
-  await page.getByRole('button', { name: 'Account menu' }).click();
-  await page.getByText('Repositories & credentials').first().click();
+  await page.getByRole('button', { name: 'Repositories & credentials' }).click();
   await page.waitForTimeout(1200);
   await shot('settings.png');
   // Escape rather than the close button: the dialog's own backdrop swallows

@@ -154,8 +154,7 @@ test.describe('agents', () => {
 
     // Every session is reachable from settings, which is how a session holding
     // a repository open can be found and released.
-    await page.getByRole('button', { name: 'Account menu' }).click();
-    await page.getByText('Repositories & credentials').first().click();
+    await page.getByRole('button', { name: 'Repositories & credentials' }).click();
     await page.getByRole('button', { name: 'Agents', exact: true }).click();
 
     const row = page.locator('[data-session-row]').filter({ hasText: /in Settings \d+/ }).first();

@@ -338,6 +338,22 @@ test.describe('chat', () => {
     await expect(page.getByLabel(/^Group name/)).toHaveCount(0);
   });
 
+  test('signing out asks for confirmation first', async ({ page }) => {
+    await login(page, ada);
+
+    await page.getByRole('button', { name: 'Sign out' }).click();
+    await expect(page.getByText('Sign out of TeamAgents?')).toBeVisible();
+
+    // Backing out leaves the session alone.
+    await page.getByRole('button', { name: 'Stay signed in' }).click();
+    await expect(page.locator('.ta-shell')).toBeVisible();
+
+    // Confirming returns to the sign-in screen.
+    await page.getByRole('button', { name: 'Sign out' }).click();
+    await page.getByRole('button', { name: 'Sign out', exact: true }).last().click();
+    await expect(page.getByLabel('Email or username')).toBeVisible({ timeout: 20_000 });
+  });
+
   test('switches between light and dark themes', async ({ page }) => {
     await login(page, ada);
 

@@ -1,5 +1,7 @@
 import type { ReactElement, SVGProps } from 'react';
 import {
+  CodeXml,
+  LogOut,
   Moon,
   Paperclip,
   SquareCode,
@@ -47,6 +49,11 @@ export function UsersPlusIcon(props: SVGProps<SVGSVGElement>): ReactElement {
 }
 
 export {
+  // `</>` for repositories and credentials; distinct from the filled
+  // `SquareCode` used by the composer's insert-code-block action, so the two
+  // are not mistaken for each other.
+  CodeXml as RepositoriesIcon,
+  LogOut as SignOutIcon,
   Moon as MoonIcon,
   Paperclip as PaperclipIcon,
   SquareCode as CodeBlockIcon,

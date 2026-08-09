@@ -1,9 +1,9 @@
 import { useMemo, useState, type ReactNode } from 'react';
+import { AlertDialog } from '@astryxdesign/core/AlertDialog';
 import { Avatar } from '@astryxdesign/core/Avatar';
 import { AvatarStatusDot } from '@astryxdesign/core/Avatar';
 import { Badge } from '@astryxdesign/core/Badge';
 import { Divider } from '@astryxdesign/core/Divider';
-import { DropdownMenu } from '@astryxdesign/core/DropdownMenu';
 import { Icon } from '@astryxdesign/core/Icon';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { HStack, StackItem, VStack } from '@astryxdesign/core/Layout';
@@ -15,7 +15,14 @@ import type { ConversationSummary } from '@teamagents/shared';
 import { useAuth, useCurrentUser } from '../state/AuthContext.js';
 import { useChat } from '../state/ChatContext.js';
 import { useThemeMode } from '../App.js';
-import { MoonIcon, SunIcon, UserPlusIcon, UsersPlusIcon } from './icons.js';
+import {
+  MoonIcon,
+  RepositoriesIcon,
+  SignOutIcon,
+  SunIcon,
+  UserPlusIcon,
+  UsersPlusIcon,
+} from './icons.js';
 
 interface SidebarProps {
   onOpenSettings: () => void;
@@ -34,6 +41,8 @@ export function Sidebar({ onOpenSettings, onNewChat }: SidebarProps): ReactNode 
     isConnected,
   } = useChat();
   const [filter, setFilter] = useState('');
+  const [isConfirmingSignOut, setIsConfirmingSignOut] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
 
   const visible = useMemo(() => {
     const needle = filter.trim().toLowerCase();
@@ -81,20 +90,23 @@ export function Sidebar({ onOpenSettings, onNewChat }: SidebarProps): ReactNode 
               size="sm"
               onClick={toggleMode}
             />
-            <DropdownMenu
-              hasChevron={false}
-              button={{
-                label: 'Account menu',
-                icon: <Icon icon="moreHorizontal" />,
-                variant: 'ghost',
-                size: 'sm',
-                isIconOnly: true,
-              }}
-              items={[
-                { label: 'Repositories & credentials', onClick: onOpenSettings },
-                { type: 'divider' },
-                { label: 'Sign out', onClick: () => void logout() },
-              ]}
+            {/* Two destinations, so two buttons: a menu here only added a click
+                and hid both behind an icon that says nothing about either. */}
+            <IconButton
+              label="Repositories & credentials"
+              tooltip="Repositories & credentials"
+              icon={<Icon icon={RepositoriesIcon} />}
+              variant="ghost"
+              size="sm"
+              onClick={onOpenSettings}
+            />
+            <IconButton
+              label="Sign out"
+              tooltip="Sign out"
+              icon={<Icon icon={SignOutIcon} />}
+              variant="ghost"
+              size="sm"
+              onClick={() => setIsConfirmingSignOut(true)}
             />
           </HStack>
         </HStack>
@@ -163,6 +175,37 @@ export function Sidebar({ onOpenSettings, onNewChat }: SidebarProps): ReactNode 
           )}
         </VStack>
       </StackItem>
+
+      {/*
+        Signing out sits one pixel from the theme toggle and the settings
+        button, and it drops everything you were reading. The same AlertDialog
+        used for erasing a sandbox guards it — with a neutral action variant,
+        because nothing is actually destroyed.
+      */}
+      <AlertDialog
+        isOpen={isConfirmingSignOut}
+        onOpenChange={setIsConfirmingSignOut}
+        title="Sign out of TeamAgents?"
+        description={
+          'Your agent sessions keep running and their sandboxes are untouched — ' +
+          'you will just need to sign in again to see them.'
+        }
+        actionLabel="Sign out"
+        cancelLabel="Stay signed in"
+        actionVariant="primary"
+        isActionLoading={isSigningOut}
+        onAction={async () => {
+          setIsSigningOut(true);
+          try {
+            await logout();
+          } finally {
+            // Signing out unmounts this whole view, so the reset only matters
+            // when the request failed and the dialog is still on screen.
+            setIsSigningOut(false);
+            setIsConfirmingSignOut(false);
+          }
+        }}
+      />
     </aside>
   );
 }
