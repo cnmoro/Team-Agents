@@ -8,6 +8,7 @@ import {
   Sun,
   Trash2,
   UserPlus,
+  Users,
   Wrench,
 } from 'lucide-react';
 
@@ -60,5 +61,6 @@ export {
   Sun as SunIcon,
   Trash2 as TrashIcon,
   UserPlus as UserPlusIcon,
+  Users as EveryoneIcon,
   Wrench as AgentIcon,
 };

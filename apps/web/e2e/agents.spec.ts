@@ -246,4 +246,47 @@ test.describe('agents', () => {
 
     await expect(messageText(page, /QUOKKA-VELVET/).last()).toBeVisible({ timeout: 300_000 });
   });
+
+  test('the "Send to..." selector shows a different icon for everyone vs. an agent', async ({
+    page,
+  }) => {
+    test.skip(!hasHarness, 'No agent harness is installed on this host');
+
+    // Regression guard: the collapsed "Send to..." control used to look
+    // identical whether it targeted "Everyone in the chat" (the default) or a
+    // specific agent — a user who meant to follow up with an agent but left
+    // the default selected would have their message silently posted to the
+    // whole chat instead, with no error and no obvious visual cue. The fix
+    // gives the trigger a leading icon that swaps with the selected target.
+    const name = await freshConversation('TargetIcon');
+    await login(page, ada);
+    await openConversation(page, name);
+
+    await page.getByRole('button', { name: 'Run an agent' }).click();
+    await page
+      .getByRole('textbox', { name: 'Agent prompt' })
+      .fill('Without using any tools, reply with exactly: ICON-OK');
+    await page.getByRole('button', { name: 'Start agent' }).click();
+    await expect(messageText(page, 'ICON-OK').first()).toBeVisible({ timeout: 300_000 });
+
+    const combobox = page.getByRole('combobox', { name: /Send to/ });
+    const trigger = combobox.locator('xpath=..');
+
+    // Untouched default: targets everyone, shows the "everyone" icon.
+    await expect(trigger.locator('svg.lucide-users')).toBeVisible();
+    await expect(trigger.locator('svg.lucide-wrench')).toHaveCount(0);
+
+    await combobox.click();
+    await page.getByRole('option', { name: /ICON-OK/ }).click();
+
+    // Targeting the agent swaps the icon, so the two states are never
+    // visually identical in the collapsed control.
+    await expect(trigger.locator('svg.lucide-wrench')).toBeVisible();
+    await expect(trigger.locator('svg.lucide-users')).toHaveCount(0);
+
+    // Clearing back to "everyone" swaps the icon back.
+    await page.getByRole('button', { name: 'Clear Send to' }).click();
+    await expect(trigger.locator('svg.lucide-users')).toBeVisible();
+    await expect(trigger.locator('svg.lucide-wrench')).toHaveCount(0);
+  });
 });

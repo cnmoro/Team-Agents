@@ -27,7 +27,7 @@ import {
 import { ApiError, api } from '../lib/api.js';
 import { useAppToast } from '../hooks/useAppToast.js';
 import { formatBytes } from './blocks/MessageBlocks.js';
-import { AgentIcon, CodeBlockIcon, PaperclipIcon } from './icons.js';
+import { AgentIcon, CodeBlockIcon, EveryoneIcon, PaperclipIcon } from './icons.js';
 
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
@@ -473,10 +473,21 @@ export function Composer({
                 variant="ghost"
                 placeholder="Send to…"
                 hasClear
+                // The collapsed trigger otherwise looks identical whether the
+                // target is "everyone" or a specific agent (both just show a
+                // label), which let a real send-to-agent intent silently land
+                // in the plain chat instead. A start icon that swaps with the
+                // current target makes the two states distinguishable at a
+                // glance without opening the dropdown.
+                startIcon={agentTarget ? AgentIcon : EveryoneIcon}
                 value={agentTarget}
                 options={[
-                  { value: '', label: 'Everyone in the chat' },
-                  ...openAgents.map((agent) => ({ value: agent.id, label: agent.title })),
+                  { value: '', label: 'Everyone in the chat', icon: EveryoneIcon },
+                  ...openAgents.map((agent) => ({
+                    value: agent.id,
+                    label: agent.title,
+                    icon: AgentIcon,
+                  })),
                 ]}
                 onChange={(value) => setAgentTarget(value ? value : null)}
               />
