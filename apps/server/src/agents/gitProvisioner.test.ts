@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest';
-import { detectProtocol, gitEnv, redactSecrets, repoDirName } from './gitProvisioner.js';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { detectProtocol, ensureSshConfigFile, gitEnv, redactSecrets, repoDirName } from './gitProvisioner.js';
+import type { Sandbox } from '../sandbox/sandboxManager.js';
 
 describe('detectProtocol', () => {
   it('recognizes HTTPS remotes', () => {
@@ -87,5 +91,58 @@ describe('gitEnv', () => {
     expect(env.SSH_ASKPASS_REQUIRE).toBe('force');
     // BatchMode would defeat the askpass helper, so it must not be set here.
     expect(env.GIT_SSH_COMMAND).not.toContain('BatchMode');
+  });
+
+  it('pins ssh to the sandbox-local config in both branches, skipping the system one', () => {
+    // Regression guard: without `-F`, ssh also parses the host's
+    // /etc/ssh/ssh_config, which on modern Debian/Ubuntu Includes
+    // /etc/ssh/ssh_config.d/*.conf. Bubblewrap's implicit unprivileged user
+    // namespace makes root-owned files in there appear owned by the nobody
+    // overflow uid from inside the sandbox, so ssh's strict permission check
+    // on Included files rejects them with "Bad owner or permissions" before
+    // ever attempting authentication — breaking every SSH clone regardless of
+    // whether the credential itself is valid. Verified for real against a
+    // local sshd on this host: before this fix, a real SSH credential/repo
+    // driven through the actual UI failed with exactly that error; after,
+    // the same setup clones successfully.
+    expect(gitEnv(false).GIT_SSH_COMMAND).toContain('-F /home/agent/.ssh/config');
+    expect(gitEnv(true).GIT_SSH_COMMAND).toContain('-F /home/agent/.ssh/config');
+  });
+});
+
+describe('ensureSshConfigFile', () => {
+  let root: string;
+
+  afterEach(async () => {
+    if (root) await rm(root, { recursive: true, force: true });
+  });
+
+  it('creates ~/.ssh/config so `-F` always has a real file to point at', async () => {
+    root = await mkdtemp(path.join(tmpdir(), 'ta-sshcfg-'));
+    const homeDir = path.join(root, 'home');
+    const sandbox: Sandbox = { agentSessionId: 'test', root, homeDir, workDir: path.join(root, 'work') };
+
+    // No credential bound at all (e.g. an anonymous ssh:// remote) — the file
+    // must still exist afterward, since ssh -F errors out on a missing file.
+    await ensureSshConfigFile(sandbox);
+
+    const configPath = path.join(homeDir, '.ssh', 'config');
+    await expect(readFile(configPath, 'utf8')).resolves.toBe('');
+    const stats = await stat(configPath);
+    expect(stats.mode & 0o777).toBe(0o600);
+  });
+
+  it('is idempotent and never clobbers an existing config', async () => {
+    root = await mkdtemp(path.join(tmpdir(), 'ta-sshcfg-'));
+    const homeDir = path.join(root, 'home');
+    const sandbox: Sandbox = { agentSessionId: 'test', root, homeDir, workDir: path.join(root, 'work') };
+
+    await ensureSshConfigFile(sandbox);
+    const configPath = path.join(homeDir, '.ssh', 'config');
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(configPath, 'Host example\n  IdentityFile /home/agent/.ssh/id_x\n');
+
+    await ensureSshConfigFile(sandbox);
+    await expect(readFile(configPath, 'utf8')).resolves.toContain('Host example');
   });
 });

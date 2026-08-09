@@ -156,19 +156,55 @@ async function installCredential(
   return { needsAskpass: false };
 }
 
+/**
+ * The sandbox-local ssh config every git invocation is pinned to via `-F`.
+ *
+ * Without `-F`, ssh also parses the *system* `/etc/ssh/ssh_config`, which on
+ * modern Debian/Ubuntu (and therefore most container/host images) contains
+ * `Include /etc/ssh/ssh_config.d/*.conf`. Bubblewrap's unprivileged sandbox
+ * runs in an implicit user namespace that only maps the invoking uid — every
+ * other uid, including root, has no mapping and appears as the nobody
+ * overflow uid (65534) when `stat`'d from inside the sandbox. ssh's own
+ * strict permission check on *included* config files rejects a file that
+ * looks owned by neither root nor the invoking user, so a real, root-owned,
+ * 0644 system file (e.g. `20-systemd-ssh-proxy.conf`) fails with "Bad owner
+ * or permissions" purely because of how it appears through the sandbox's uid
+ * mapping — before ssh ever attempts authentication. Pinning `-F` to a file
+ * inside the sandbox's own (agent-owned) home directory skips the system
+ * config entirely, sidestepping the false "bad owner" rejection.
+ */
+export function sshConfigPath(): string {
+  return `${SANDBOX_HOME}/.ssh/config`;
+}
+
+/**
+ * Ensures the sandbox has a `~/.ssh/config` file `-F` can point at. ssh
+ * refuses to start if `-F` names a file that does not exist, so every git
+ * invocation needs one present even when no SSH credential is bound (e.g. an
+ * anonymous `ssh://` or `git@host:` remote).
+ */
+export async function ensureSshConfigFile(sandbox: Sandbox): Promise<void> {
+  const sshDir = path.join(sandbox.homeDir, '.ssh');
+  await mkdir(sshDir, { recursive: true, mode: 0o700 });
+  const configPath = path.join(sshDir, 'config');
+  if (!(await pathExists(configPath))) {
+    await writeFile(configPath, '', { mode: 0o600 });
+  }
+}
+
 /** Environment additions that make non-interactive git work in the sandbox. */
 export function gitEnv(needsAskpass: boolean): Record<string, string> {
   const env: Record<string, string> = {
     // Never fall back to an interactive prompt: it would hang the agent.
     GIT_TERMINAL_PROMPT: '0',
-    GIT_SSH_COMMAND: 'ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new',
+    GIT_SSH_COMMAND: `ssh -F ${sshConfigPath()} -o BatchMode=yes -o StrictHostKeyChecking=accept-new`,
   };
   if (needsAskpass) {
     env.SSH_ASKPASS = `${SANDBOX_HOME}/.ssh/askpass`;
     env.SSH_ASKPASS_REQUIRE = 'force';
     env.DISPLAY = ':0';
     delete env.GIT_SSH_COMMAND;
-    env.GIT_SSH_COMMAND = 'ssh -o StrictHostKeyChecking=accept-new';
+    env.GIT_SSH_COMMAND = `ssh -F ${sshConfigPath()} -o StrictHostKeyChecking=accept-new`;
   }
   return env;
 }
@@ -208,6 +244,10 @@ export async function provisionRepository(
     cloneError: null,
     reused: false,
   };
+
+  // Always present so `-F` in gitEnv() has a real file to point at, even for
+  // an SSH remote with no bound credential.
+  await ensureSshConfigFile(sandbox);
 
   let needsAskpass = false;
   if (repository.credentialId) {
