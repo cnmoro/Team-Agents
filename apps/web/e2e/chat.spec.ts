@@ -387,4 +387,46 @@ test.describe('chat', () => {
     );
     expect(overflowPx).toBeLessThanOrEqual(0);
   });
+
+  test('the Settings dialog tab bar is reachable (not clipped) on a narrow phone width', async ({
+    page,
+  }) => {
+    // The "Repositories | Credentials | Agents | System" tab strip needs
+    // more width than a 390px dialog can give it without shrinking below
+    // any single tab's content width. Without a scrollable wrapper, the
+    // last tab ("System") was silently clipped by the Dialog's own
+    // `overflow: hidden` — invisible and unreachable, with no scrollbar or
+    // affordance hinting it was there. This proves the strip is now
+    // horizontally scrollable and "System" can actually be reached and
+    // clicked, not just that the page as a whole avoids overflow.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await login(page, ada);
+
+    await page.getByRole('button', { name: 'Repositories & credentials' }).click();
+    await expect(page.getByRole('heading', { name: 'Repositories & credentials' })).toBeVisible();
+
+    const systemTab = page.getByRole('button', { name: 'System', exact: true });
+    const wrapper = page.locator('.ta-tab-scroll');
+    await expect(wrapper).toBeVisible();
+
+    // Scroll the strip fully into view, the way a real thumb-swipe would.
+    await wrapper.evaluate((el) => {
+      el.scrollLeft = el.scrollWidth;
+    });
+
+    await expect(systemTab).toBeVisible();
+    const box = await systemTab.boundingBox();
+    expect(box).not.toBeNull();
+    // Fully inside the dialog's own bounds (and the 390px viewport), not
+    // clipped off the right edge like before the fix.
+    expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+
+    await systemTab.click();
+    await expect(page.getByText('Agent harnesses')).toBeVisible();
+
+    const overflowPx = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflowPx).toBeLessThanOrEqual(0);
+  });
 });

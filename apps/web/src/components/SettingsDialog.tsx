@@ -39,12 +39,17 @@ export function SettingsDialog({ isOpen, onOpenChange }: SettingsDialogProps): R
       {/* Passing onOpenChange is what renders the close button. */}
       <DialogHeader title="Repositories & credentials" onOpenChange={onOpenChange} />
       <VStack gap={3} padding={4}>
-        <TabList value={tab} onChange={setTab} hasDivider>
-          <Tab value="repositories" label="Repositories" />
-          <Tab value="credentials" label="Credentials" />
-          <Tab value="agents" label="Agents" />
-          <Tab value="system" label="System" />
-        </TabList>
+        {/* Narrow phone widths (e.g. 390px) can't fit all four tab labels;
+            without this the strip is silently clipped by the Dialog's own
+            `overflow: hidden` with no way to reach "System". */}
+        <div className="ta-tab-scroll">
+          <TabList value={tab} onChange={setTab} hasDivider>
+            <Tab value="repositories" label="Repositories" />
+            <Tab value="credentials" label="Credentials" />
+            <Tab value="agents" label="Agents" />
+            <Tab value="system" label="System" />
+          </TabList>
+        </div>
 
         <StackItem size="fill" isScrollable>
           {tab === 'repositories' ? <RepositoriesPanel revision={revision} onChanged={bump} /> : null}

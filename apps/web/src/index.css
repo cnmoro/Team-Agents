@@ -234,6 +234,24 @@
     overflow-y: auto;
   }
 
+  /* --- Tab strips --------------------------------------------------------
+   * A TabList's tabs never shrink below their label width, and its own
+   * `nav` only caps itself at `max-width: 100%` of its container -- it does
+   * not scroll. On a wide-enough tab set (e.g. Settings' "Repositories |
+   * Credentials | Agents | System") that overflow is silently clipped by an
+   * ancestor (Dialog's own `overflow: hidden`) on narrow phone widths, with
+   * no way to reach the clipped tabs. Wrapping the TabList in this scrollable
+   * strip turns that into a real horizontal swipe instead of losing tabs. */
+  .ta-tab-scroll {
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .ta-tab-scroll > nav {
+    min-width: max-content;
+  }
+
   .ta-code-body pre {
     margin: 0;
     padding: var(--spacing-3);
