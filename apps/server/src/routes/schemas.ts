@@ -58,6 +58,7 @@ export const sendMessageSchema = z.object({
   blocks: z.array(messageBlockSchema).min(1).max(30),
   mentions: z.array(objectId).max(100).optional(),
   agentSessionId: objectId.nullable().optional(),
+  contextMessageIds: z.array(objectId).max(500).optional(),
 });
 
 export const createConversationSchema = z

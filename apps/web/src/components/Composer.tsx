@@ -37,7 +37,12 @@ interface ComposerProps {
   agents: AgentSession[];
   selectedMessageIds: string[];
   onClearSelection: () => void;
-  onSend: (blocks: MessageBlock[], mentions: string[], agentSessionId: string | null) => Promise<void>;
+  onSend: (
+    blocks: MessageBlock[],
+    mentions: string[],
+    agentSessionId: string | null,
+    contextMessageIds: string[],
+  ) => Promise<void>;
   onRequestAgent: (prompt: string) => void;
   onTyping: (isTyping: boolean) => void;
 }
@@ -259,18 +264,25 @@ export function Composer({
     const blocks = buildBlocks();
     if (blocks.length === 0 || isSending) return;
 
+    // A message selection only means something once it has somewhere to go:
+    // targeting an existing agent carries it along as context, exactly like
+    // starting a new one does. Aimed at "everyone" it is inert, since a plain
+    // chat message has no context slot to put it in.
+    const contextForAgent = agentTarget ? selectedMessageIds : [];
+
     setIsSending(true);
     try {
       // Only mentions still present in the text are sent; removing the token
       // from the message should remove the notification with it.
       const stillMentioned = mentions.filter((id) => text.includes(`(${id})`));
-      await onSend(blocks, stillMentioned, agentTarget);
+      await onSend(blocks, stillMentioned, agentTarget, contextForAgent);
       setText('');
       setMentions([]);
       setPendingCode([]);
       setAttachments([]);
       setMentionQuery(null);
       onTyping(false);
+      if (contextForAgent.length > 0) onClearSelection();
     } catch (error) {
       toast({
         body: error instanceof ApiError ? error.message : 'Could not send that message.',
@@ -289,24 +301,32 @@ export function Composer({
       <VStack gap={2}>
         {selectedMessageIds.length > 0 ? (
           <Card padding={2} variant="blue">
-            <HStack gap={3} vAlign="center" hAlign="between">
-              <HStack gap={2} vAlign="center">
-                <Icon icon="check" color="accent" size="sm" />
-                <Text type="supporting">
-                  {selectedMessageIds.length} message
-                  {selectedMessageIds.length === 1 ? '' : 's'} selected as agent context
+            <VStack gap={1}>
+              <HStack gap={3} vAlign="center" hAlign="between">
+                <HStack gap={2} vAlign="center">
+                  <Icon icon="check" color="accent" size="sm" />
+                  <Text type="supporting">
+                    {selectedMessageIds.length} message
+                    {selectedMessageIds.length === 1 ? '' : 's'} selected as agent context
+                  </Text>
+                </HStack>
+                <HStack gap={2}>
+                  <Button
+                    label="Start a new agent"
+                    size="sm"
+                    variant="primary"
+                    onClick={() => onRequestAgent(text.trim())}
+                  />
+                  <Button label="Clear" size="sm" variant="ghost" onClick={onClearSelection} />
+                </HStack>
+              </HStack>
+              {agentTarget ? (
+                <Text type="supporting" color="accent">
+                  Sending will also hand these to {openAgents.find((a) => a.id === agentTarget)?.title
+                    ?? 'the selected agent'} as context.
                 </Text>
-              </HStack>
-              <HStack gap={2}>
-                <Button
-                  label="Send to agent"
-                  size="sm"
-                  variant="primary"
-                  onClick={() => onRequestAgent(text.trim())}
-                />
-                <Button label="Clear" size="sm" variant="ghost" onClick={onClearSelection} />
-              </HStack>
-            </HStack>
+              ) : null}
+            </VStack>
           </Card>
         ) : null}
 

@@ -47,6 +47,12 @@ export interface SendMessageInput {
   mentions?: string[];
   /** Set to route this message as a follow-up prompt to a running agent. */
   agentSessionId?: string | null;
+  /**
+   * Chat messages to splice into the agent's context alongside this prompt.
+   * Only meaningful together with `agentSessionId` — priming an ongoing
+   * session the same way you can when first starting one.
+   */
+  contextMessageIds?: string[];
 }
 
 export interface ApiError {

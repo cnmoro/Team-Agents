@@ -86,7 +86,13 @@ export async function messageRoutes(app: FastifyInstance): Promise<void> {
       if (prompt) {
         // Fire-and-forget: the agent streams its progress over sockets, so the
         // sender's POST must not block for the length of an agent turn.
-        void promptExistingAgent(input.agentSessionId, viewerId, { prompt }).catch((error) => {
+        // `contextMessageIds` carries forward messages selected in the UI, so
+        // priming an agent's context works the same way on a follow-up as it
+        // does when the session is first started.
+        void promptExistingAgent(input.agentSessionId, viewerId, {
+          prompt,
+          contextMessageIds: input.contextMessageIds,
+        }).catch((error) => {
           request.log.error({ err: error, agentSessionId: input.agentSessionId }, 'agent prompt failed');
         });
       }

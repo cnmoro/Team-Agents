@@ -202,4 +202,48 @@ test.describe('agents', () => {
     await expect(card.getByText(/2 turns/)).toBeVisible({ timeout: 60_000 });
     expect(await sandboxPathOf()).toBe(firstSandbox);
   });
+
+  test('selecting messages and sending to an existing agent carries them as context', async ({
+    page,
+  }) => {
+    test.skip(!hasHarness, 'No agent harness is installed on this host');
+
+    const name = await freshConversation('ContextFollowup');
+    await login(page, ada);
+    await openConversation(page, name);
+
+    // A fact that only exists in the chat history, never in a prompt the agent
+    // is sent directly — the only way it can reach the agent is if the
+    // selected message is actually wired through as context.
+    await page.getByLabel('Message', { exact: true }).fill('The launch codeword is QUOKKA-VELVET.');
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await expect(messageText(page, 'QUOKKA-VELVET').first()).toBeVisible({ timeout: 20_000 });
+
+    await page.getByRole('button', { name: 'Run an agent' }).click();
+    await page
+      .getByRole('textbox', { name: 'Agent prompt' })
+      .fill('Without using any tools, reply with exactly: READY');
+    await page.getByRole('button', { name: 'Start agent' }).click();
+    await expect(messageText(page, 'READY').first()).toBeVisible({ timeout: 300_000 });
+
+    // Select the codeword message, then send a follow-up to the existing agent
+    // with no mention of the codeword anywhere in the typed text.
+    await page.getByRole('button', { name: 'Select messages' }).click();
+    await page.locator('.ta-message-row').filter({ hasText: 'QUOKKA-VELVET' }).first().click();
+    await expect(page.getByText('1 message selected as agent context')).toBeVisible();
+
+    await page.getByRole('combobox', { name: /Send to/ }).click();
+    await page.getByRole('option', { name: /READY/ }).click();
+    await expect(page.getByText(/Sending will also hand these to/)).toBeVisible();
+
+    await page
+      .getByLabel('Message', { exact: true })
+      .fill('What codeword did I mention earlier? Reply with just the word, no tools.');
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+
+    // Selection clears itself once it has actually been used.
+    await expect(page.getByText('1 message selected as agent context')).toHaveCount(0);
+
+    await expect(messageText(page, /QUOKKA-VELVET/).last()).toBeVisible({ timeout: 300_000 });
+  });
 });

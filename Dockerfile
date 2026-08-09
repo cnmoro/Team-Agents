@@ -33,7 +33,12 @@ RUN npm prune --omit=dev
 FROM node:22-bookworm-slim AS runtime
 
 # bubblewrap sandboxes the agents; git and openssh-client are what those agents
-# use to reach repositories; ca-certificates lets everything speak TLS.
+# use to reach repositories; ca-certificates lets everything speak TLS. Node
+# (this base image) already ships npm, so the JS/TS toolchain works out of the
+# box; python3-pip and python3-venv are added for the same reason on the Python
+# side — without them an agent can write a test suite but has no way to
+# install its dependencies or actually run it, which shows up as "it works" in
+# the chat but nothing was ever verified.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       bubblewrap \
@@ -41,6 +46,9 @@ RUN apt-get update \
       git \
       openssh-client \
       curl \
+      python3 \
+      python3-pip \
+      python3-venv \
  && rm -rf /var/lib/apt/lists/*
 
 # Agent harnesses. Each is optional: the app detects what is present at startup

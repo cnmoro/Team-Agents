@@ -99,8 +99,18 @@ export function ConversationView(): ReactNode {
   }, [clearSelection]);
 
   const handleSend = useCallback(
-    async (blocks: MessageBlock[], mentions: string[], agentSessionId: string | null) => {
-      await sendMessage({ blocks, mentions, agentSessionId });
+    async (
+      blocks: MessageBlock[],
+      mentions: string[],
+      agentSessionId: string | null,
+      contextMessageIds: string[],
+    ) => {
+      await sendMessage({
+        blocks,
+        mentions,
+        agentSessionId,
+        contextMessageIds: contextMessageIds.length > 0 ? contextMessageIds : undefined,
+      });
     },
     [sendMessage],
   );
