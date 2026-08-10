@@ -378,4 +378,45 @@ test.describe('agents', () => {
     await expect(trigger.locator('svg.lucide-users')).toBeVisible();
     await expect(trigger.locator('svg.lucide-wrench')).toHaveCount(0);
   });
+
+  test('the "Send to..." selector distinguishes two agents that share the same title', async ({
+    page,
+  }) => {
+    test.skip(!hasHarness, 'No agent harness is installed on this host');
+
+    // Regression guard: an agent's title defaults to a truncation of its
+    // starting prompt, and two teammates in the same conversation commonly
+    // start agents with the same kind of ask ("check the tests", "run the
+    // linter") — sometimes on the same harness. The "Send to..." dropdown
+    // used to render `agent.title` verbatim, so two such agents showed up as
+    // two literally identical-looking options; selection still worked
+    // (keyed by id under the hood), but a user had no way to tell which was
+    // which before clicking. The Composer now disambiguates by appending the
+    // harness label and, for same-harness/same-title duplicates, an ordinal
+    // suffix.
+    const name = await freshConversation('DuplicateTitles');
+    await login(page, ada);
+    await openConversation(page, name);
+
+    const samePrompt = 'Without using any tools, reply with exactly: TWIN-READY';
+
+    await page.getByRole('button', { name: 'Run an agent' }).click();
+    await page.getByRole('textbox', { name: 'Agent prompt' }).fill(samePrompt);
+    await page.getByRole('button', { name: 'Start agent' }).click();
+    await expect(messageText(page, 'TWIN-READY').first()).toBeVisible({ timeout: 300_000 });
+
+    await page.getByRole('button', { name: 'Run an agent' }).click();
+    await page.getByRole('textbox', { name: 'Agent prompt' }).fill(samePrompt);
+    await page.getByRole('button', { name: 'Start agent' }).click();
+    await expect(messageText(page, 'TWIN-READY').last()).toBeVisible({ timeout: 300_000 });
+
+    await page.getByRole('combobox', { name: /Send to/ }).click();
+    const options = page.getByRole('option').filter({ hasText: /TWIN-READY/ });
+    await expect(options).toHaveCount(2);
+
+    const [first, second] = await options.allInnerTexts();
+    expect(first).not.toEqual(second);
+    expect(first).toContain('(Claude Code)');
+    expect(second).toContain('(Claude Code)');
+  });
 });

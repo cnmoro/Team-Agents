@@ -19,6 +19,7 @@ import { Text } from '@astryxdesign/core/Text';
 
 import {
   CODE_LANGUAGES,
+  HARNESS_LABELS,
   type AgentSession,
   type MessageBlock,
   type UploadedFile,
@@ -88,6 +89,45 @@ export function Composer({
   const openAgents = useMemo(
     () => agents.filter((agent) => agent.status !== 'closed'),
     [agents],
+  );
+
+  // Two agents in the same conversation commonly share an identical or
+  // near-identical title (their title defaults to a truncation of the
+  // starting prompt, and teammates often start agents with the same kind of
+  // ask — "check the tests", "run the linter" — sometimes on different
+  // harnesses, sometimes on the same one). The "Send to..." dropdown used to
+  // show `agent.title` verbatim, so two such agents rendered as literally
+  // indistinguishable options — selection still worked (keyed by id), but a
+  // user had no way to tell which was which before clicking. Disambiguate by
+  // appending the harness label, and — for the rarer case of two agents on
+  // the *same* harness with the *same* title — an ordinal suffix so every
+  // label is unique.
+  const agentLabels = useMemo(() => {
+    const withHarness = openAgents.map(
+      (agent) => `${agent.title} (${HARNESS_LABELS[agent.harness]})`,
+    );
+    const totalByLabel = new Map<string, number>();
+    for (const label of withHarness) {
+      totalByLabel.set(label, (totalByLabel.get(label) ?? 0) + 1);
+    }
+    const seenByLabel = new Map<string, number>();
+    const labels = new Map<string, string>();
+    openAgents.forEach((agent, index) => {
+      const base = withHarness[index]!;
+      if ((totalByLabel.get(base) ?? 0) <= 1) {
+        labels.set(agent.id, base);
+        return;
+      }
+      const ordinal = (seenByLabel.get(base) ?? 0) + 1;
+      seenByLabel.set(base, ordinal);
+      labels.set(agent.id, `${base} #${ordinal}`);
+    });
+    return labels;
+  }, [openAgents]);
+
+  const labelForAgent = useCallback(
+    (agentId: string) => agentLabels.get(agentId) ?? 'the selected agent',
+    [agentLabels],
   );
 
   // A closed agent must not stay selected as the composer's target.
@@ -322,8 +362,7 @@ export function Composer({
               </HStack>
               {agentTarget ? (
                 <Text type="supporting" color="accent">
-                  Sending will also hand these to {openAgents.find((a) => a.id === agentTarget)?.title
-                    ?? 'the selected agent'} as context.
+                  Sending will also hand these to {labelForAgent(agentTarget)} as context.
                 </Text>
               ) : null}
             </VStack>
@@ -404,7 +443,7 @@ export function Composer({
           <HStack gap={2} vAlign="center">
             <Badge variant="purple" label="Replying to agent" />
             <Text type="supporting" color="secondary">
-              {openAgents.find((agent) => agent.id === agentTarget)?.title}
+              {labelForAgent(agentTarget)}
             </Text>
             <Button
               label="Cancel"
@@ -485,7 +524,7 @@ export function Composer({
                   { value: '', label: 'Everyone in the chat', icon: EveryoneIcon },
                   ...openAgents.map((agent) => ({
                     value: agent.id,
-                    label: agent.title,
+                    label: labelForAgent(agent.id),
                     icon: AgentIcon,
                   })),
                 ]}
