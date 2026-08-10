@@ -157,10 +157,21 @@ async function seedGitConfig(sandbox: Sandbox): Promise<void> {
   );
 }
 
-/** Removes a sandbox and everything in it. Irreversible. */
+/**
+ * Removes a sandbox and everything in it. Irreversible.
+ *
+ * A session can be closed while it is still provisioning — the background
+ * clone/setup work spawned by `startAgent` may still be writing files under
+ * `sandbox.root` at the exact moment this walks the tree to delete it. That
+ * TOCTOU race throws `ENOTEMPTY` on the final `rmdir` even with `force`,
+ * which isn't a real failure — it just means a concurrent writer lost the
+ * race. `maxRetries`/`retryDelay` make `rm` retry on exactly that class of
+ * transient error instead of surfacing a 500 to whoever clicked "Close &
+ * erase" a beat too early.
+ */
 export async function destroySandbox(agentSessionId: string): Promise<void> {
   const sandbox = describeSandbox(agentSessionId);
-  await rm(sandbox.root, { recursive: true, force: true });
+  await rm(sandbox.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
 
 export async function sandboxExists(agentSessionId: string): Promise<boolean> {

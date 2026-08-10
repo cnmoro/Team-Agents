@@ -204,6 +204,60 @@ test.describe('agents', () => {
     });
   });
 
+  test('closed sessions past the first 20 are reachable, not just counted', async ({ page }) => {
+    test.skip(!hasHarness, 'No agent harness is installed on this host');
+
+    // The panel's own "closed" divider counts every closed session, but the
+    // list underneath used to hard-truncate at 20 with no way to see the
+    // rest — so a real "23 closed" label could sit above only 20 rows and
+    // silently drop the other 3. Recreate that by closing 21 real sessions.
+    const stamp = Date.now();
+    const name = await freshConversation('ManyClosed');
+    const conversation = await apiAs<{ id: string }>(ada, 'POST', '/api/conversations', {
+      type: 'group',
+      memberIds: [alan.id],
+      name,
+    });
+
+    for (let i = 0; i < 21; i += 1) {
+      const session = await apiAs<{ id: string }>(ada, 'POST', '/api/agents', {
+        conversationId: conversation.id,
+        harness: 'claude-code',
+        repositoryIds: [],
+        prompt: 'Without using any tools, reply with exactly: OK',
+        title: `ManyClosed ${stamp} session ${i}`,
+      });
+      await apiAs(ada, 'DELETE', `/api/agents/${session.id}`);
+    }
+
+    await login(page, ada);
+    await page.getByRole('button', { name: 'Repositories & credentials' }).click();
+    await page.getByRole('button', { name: 'Agents', exact: true }).click();
+
+    const closedDivider = page.getByText(/^\d+ closed$/);
+    await expect(closedDivider).toBeVisible({ timeout: 30_000 });
+    const closedCount = Number((await closedDivider.textContent())?.match(/\d+/)?.[0]);
+    expect(closedCount).toBeGreaterThanOrEqual(21);
+
+    const showAll = page.getByRole('button', { name: /^Show all \d+$/ });
+    await expect(showAll).toBeVisible();
+
+    // The list is sorted newest-first, so of our 21 sessions the very first
+    // one created (session 0) is the one that falls past the truncation
+    // point and is missing from the list before expanding. Scoped to
+    // `[data-closed-session-row]` so it can't match the unrelated "Ada
+    // closed the agent ..." system chat message this same close produced.
+    const closedRow = (i: number) =>
+      page.locator('[data-closed-session-row]').filter({ hasText: `ManyClosed ${stamp} session ${i}` });
+    await expect(closedRow(0)).toHaveCount(0);
+
+    await showAll.click();
+    await expect(showAll).toHaveCount(0);
+    for (const i of [0, 10, 20]) {
+      await expect(closedRow(i)).toBeVisible();
+    }
+  });
+
   test('the Agents settings panel does not clip the "Close & erase" button on a narrow phone width', async ({
     page,
   }) => {

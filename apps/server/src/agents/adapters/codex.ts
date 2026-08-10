@@ -182,6 +182,12 @@ class CodexRunner implements HarnessRunner {
     });
 
     child.on('error', (error) => this.failTurn(error));
+    // See the equivalent listener in claudeCode.ts: `child.stdin` emits its
+    // own 'error' (typically EPIPE, writing a request/interrupt after the
+    // process has already exited — e.g. a session closed concurrently with a
+    // turn) independently of the child's own 'error' event. Unhandled, that
+    // crashes the entire server process, not just this session.
+    child.stdin.on('error', (error) => this.failTurn(error));
     child.on('close', (code) => {
       reader.end();
       this.child = null;

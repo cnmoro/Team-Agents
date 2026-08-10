@@ -88,14 +88,33 @@ class AgentRuntime {
     hub.emitAgentEvent(String(session.conversationId), serializeAgentEvent(doc));
   }
 
+  /**
+   * Closing a session is meant to be terminal: `closeAgent()` erases the
+   * sandbox and marks it 'closed', and the settings panel tells the user
+   * that's permanent. But provisioning and a harness turn both run in the
+   * background and can still be mid-flight when a close lands — their own
+   * `catch` blocks then call `setStatus(..., 'error')` on a session that was
+   * *just* closed, and a plain `session.save()` here would win that race and
+   * silently resurrect it: sandbox gone, status flipped back to non-closed,
+   * with nothing in the UI to explain it. The filtered `findOneAndUpdate`
+   * makes the write a no-op once the session is closed, no matter how stale
+   * the in-memory `session` passed in is.
+   */
   async setStatus(
     session: AgentSessionDoc,
     status: AgentSessionStatus,
     lastError?: string | null,
   ): Promise<AgentSessionDoc> {
-    session.status = status;
-    if (lastError !== undefined) session.lastError = lastError;
-    await session.save();
+    const update: { status: AgentSessionStatus; lastError?: string | null } = { status };
+    if (lastError !== undefined) update.lastError = lastError;
+    const updated = await AgentSessionModel.findOneAndUpdate(
+      { _id: session._id, status: { $ne: 'closed' } },
+      { $set: update },
+      { new: true },
+    );
+    if (!updated) return session;
+    session.status = updated.status;
+    session.lastError = updated.lastError;
     hub.emitAgentSession(String(session.conversationId), serializeAgentSession(session));
     return session;
   }

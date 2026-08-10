@@ -170,6 +170,15 @@ class ClaudeCodeRunner implements HarnessRunner {
     });
 
     child.on('error', (error) => this.failTurn(error));
+    // `child.stdin` is its own stream and can emit 'error' independently of
+    // the child process's own 'error' event — most commonly EPIPE, when
+    // something writes (a turn's prompt, an abort's interrupt request) after
+    // the process has already exited, e.g. a session closed concurrently
+    // with a turn starting. A plain child-only listener does not catch that:
+    // an unhandled 'error' event on a stream is a fatal, uncaught exception
+    // that crashes the whole server process, taking down every other agent
+    // session with it. Route it through the same failure path instead.
+    child.stdin.on('error', (error) => this.failTurn(error));
     child.on('close', (code) => {
       reader.end();
       this.child = null;

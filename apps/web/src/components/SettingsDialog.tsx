@@ -450,6 +450,7 @@ function AgentsPanel({
   const [sessions, setSessions] = useState<AgentSessionWithContext[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [showAllClosed, setShowAllClosed] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -564,14 +565,22 @@ function AgentsPanel({
         <>
           <Divider label={`${closed.length} closed`} />
           <VStack gap={1}>
-            {closed.slice(0, 20).map((session) => (
-              <HStack key={session.id} gap={2} vAlign="center">
+            {(showAllClosed ? closed : closed.slice(0, 20)).map((session) => (
+              <HStack key={session.id} gap={2} vAlign="center" data-closed-session-row={session.id}>
                 <Text type="supporting" color="disabled" maxLines={1}>
                   {session.title} · {session.conversationTitle}
                 </Text>
               </HStack>
             ))}
           </VStack>
+          {!showAllClosed && closed.length > 20 ? (
+            <Button
+              label={`Show all ${closed.length}`}
+              size="sm"
+              variant="ghost"
+              onClick={() => setShowAllClosed(true)}
+            />
+          ) : null}
         </>
       ) : null}
     </VStack>
