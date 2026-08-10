@@ -58,6 +58,17 @@ class ClaudeCodeRunner implements HarnessRunner {
   private disposed = false;
   /** Text accumulated during the current turn, flushed to chat as it arrives. */
   private pendingText = '';
+  /**
+   * `spawnInSandbox()` in `startProcess()` is genuinely async (real process
+   * creation, not instant), so there is a real window — between a turn
+   * starting and `this.child` actually being assigned — during which
+   * `abort()` would otherwise be a silent no-op (its `if (!this.child)
+   * return` guard). A Stop click landing in that window must not be
+   * dropped: it is recorded here and acted on the moment the prompt for
+   * this turn has actually been sent, so the interrupt has a live turn to
+   * cancel.
+   */
+  private pendingAbort = false;
 
   constructor(private readonly ctx: AdapterContext) {
     this.sessionId = ctx.harnessSessionId ?? randomUUID();
@@ -86,6 +97,15 @@ class ClaudeCodeRunner implements HarnessRunner {
         session_id: this.sessionId,
       }),
     );
+
+    // A Stop click that arrived while the process was still spawning is
+    // recorded on `pendingAbort` (see its declaration) rather than dropped;
+    // the prompt above has now been sent, so the interrupt has a real turn
+    // to cancel.
+    if (this.pendingAbort) {
+      this.pendingAbort = false;
+      this.sendInterrupt();
+    }
 
     try {
       await turn;
@@ -376,8 +396,15 @@ class ClaudeCodeRunner implements HarnessRunner {
   }
 
   async abort(): Promise<void> {
-    if (!this.child) return;
-    this.child.stdin.write(
+    if (!this.child) {
+      this.pendingAbort = true;
+      return;
+    }
+    this.sendInterrupt();
+  }
+
+  private sendInterrupt(): void {
+    this.child?.stdin.write(
       ndjsonLine({
         type: 'control_request',
         request_id: randomUUID(),

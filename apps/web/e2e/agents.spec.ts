@@ -519,4 +519,98 @@ test.describe('agents', () => {
     expect(first).toContain('(Claude Code)');
     expect(second).toContain('(Claude Code)');
   });
+
+  test('a run interrupted mid-flight shows a clear warning state, not a misleading "Ready" badge, and recovers cleanly on a follow-up', async ({
+    page,
+  }) => {
+    test.skip(!hasHarness, 'No agent harness is installed on this host');
+
+    // Regression guard: a session that settles back to `idle` with
+    // `lastError` set — e.g. a server restart mid-turn (recovered by
+    // apps/server/src/index.ts's startup reconciliation) or a user-initiated
+    // Stop (apps/server/src/agents/runtime.ts's abort path) — used to render
+    // with the exact same green "Ready" badge as a session that finished
+    // cleanly, and the error text itself had no visual weight (plain
+    // supporting text, no icon/color), so the one signal that something did
+    // not finish was easy to miss entirely. `abort()` is used here as the
+    // real, live-triggerable way to reach that state without needing to
+    // kill the server process; it produces the identical
+    // `status: 'idle'` + `lastError` shape the restart-recovery path does.
+    const name = await freshConversation('Interrupted');
+    await login(page, ada);
+    await openConversation(page, name);
+
+    await page.getByRole('button', { name: 'Run an agent' }).click();
+    await page
+      .getByRole('textbox', { name: 'Agent prompt' })
+      .fill(
+        'Run this exact bash command and show the output as it goes: for i in $(seq 1 90); do echo "tick $i"; sleep 1; done. Do not summarize, just run it.',
+      );
+    await page.getByRole('button', { name: 'Start agent' }).click();
+
+    const card = page.locator('.ta-agent-card').first();
+    await expect(card).toBeVisible({ timeout: 60_000 });
+
+    // The "Stop" button renders as soon as the session is "busy" — which
+    // covers both 'provisioning' and 'running' — well before the harness
+    // process has actually finished spawning. Clicking it in that window
+    // used to be a silent no-op: `AgentRuntime.abort()` in runtime.ts bailed
+    // out immediately whenever no live runner was registered yet for the
+    // session (true for the whole provisioning phase), and separately each
+    // adapter's own `abort()` (apps/server/src/agents/adapters/{claudeCode,
+    // codex,opencode}.ts) bailed out whenever its underlying process hadn't
+    // spawned yet — dropping the request on the floor with no sign to the
+    // user that anything went wrong; the turn would just run to completion,
+    // uninterrupted. Both are fixed by remembering the pending abort and
+    // acting on it the moment the turn is actually live. A brief pause here
+    // mimics a human's reaction time (a real click always lands after the
+    // card has rendered and been read, never in the same instant as
+    // "Start"), landing past the CLI's own startup handshake so the
+    // interrupt has an active turn to cancel — clicking with truly zero
+    // delay can outrace the CLI's own readiness independently of the fixes
+    // above.
+    await page.waitForTimeout(1000);
+    await card.getByRole('button', { name: 'Stop' }).click();
+
+    // socket.io does not replay updates missed while disconnected (see the
+    // matching fix and comment in apps/web/src/state/ChatContext.tsx), so
+    // poll the card's own text rather than a single `expect(...).toBeVisible()`
+    // — resilient to a momentary reconnect blip during the wait.
+    let sawInterrupted = false;
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const text = await card.innerText();
+      if (text.includes('Interrupted')) {
+        sawInterrupted = true;
+        break;
+      }
+      await page.waitForTimeout(3000);
+    }
+    expect(sawInterrupted, 'the card should show "Interrupted" after Stop is clicked').toBe(true);
+    await expect(card.getByText('Ready', { exact: true })).not.toBeVisible();
+    await expect(card.getByText(/stopped before it finished/)).toBeVisible();
+
+    // A genuinely fresh page load — not just the tab that watched it happen
+    // live — must show the identical warning state.
+    await page.reload();
+    await openConversation(page, name);
+    const cardAfterReload = page.locator('.ta-agent-card').first();
+    await expect(cardAfterReload.getByText('Interrupted', { exact: true })).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(cardAfterReload.getByText(/stopped before it finished/)).toBeVisible();
+
+    // Still usable: a real follow-up through the UI resumes the same harness
+    // session and clears the warning state back to normal.
+    await page.getByRole('combobox', { name: /Send to/ }).click();
+    await page.getByRole('option', { name: /Run this exact bash command/ }).click();
+    await page
+      .getByLabel('Message', { exact: true })
+      .fill('Ignore the earlier task. Just reply with exactly: RECOVERED-OK. No tools needed.');
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+
+    await expect(messageText(page, 'RECOVERED-OK').first()).toBeVisible({ timeout: 300_000 });
+    await expect(cardAfterReload.getByText('Ready', { exact: true })).toBeVisible({
+      timeout: 60_000,
+    });
+  });
 });

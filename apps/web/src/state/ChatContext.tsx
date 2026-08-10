@@ -146,7 +146,30 @@ export function ChatProvider({ children }: { children: ReactNode }): ReactNode {
         );
       });
 
-    socket.on('connect', () => setIsConnected(true));
+    // socket.io does not replay room broadcasts missed while disconnected —
+    // a real, not-rare occurrence in practice (a flaky network, a backgrounded
+    // tab, the dev proxy dropping the upgrade). Every piece of live agent
+    // session state (`agent:session` above) is otherwise *only* ever updated
+    // by a live event, so a session that changed status while the socket was
+    // down (e.g. finished provisioning, started running, or was interrupted)
+    // would leave its card frozen on stale data indefinitely — nothing else
+    // ever triggers a refetch. Resync the active conversation's agent
+    // sessions explicitly on every reconnect (not the first connect, which
+    // is already covered by `selectConversation`'s own initial fetch).
+    let hasConnectedBefore = false;
+    socket.on('connect', () => {
+      setIsConnected(true);
+      if (hasConnectedBefore) {
+        const id = activeIdRef.current;
+        if (id) {
+          void api
+            .listAgents(id)
+            .then((sessions) => setAgentsByConversation((previous) => ({ ...previous, [id]: sessions })))
+            .catch(() => {});
+        }
+      }
+      hasConnectedBefore = true;
+    });
     socket.on('disconnect', () => setIsConnected(false));
 
     socket.on('presence:sync', ({ userIds }) => setOnlineUserIds(new Set(userIds)));

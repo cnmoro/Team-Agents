@@ -99,6 +99,16 @@ class OpenCodeRunner implements HarnessRunner {
   /** Accumulates streamed assistant text per text id. */
   private readonly textBuffers = new Map<string, string>();
   private turnActive = false;
+  /**
+   * Spawning the server, waiting for it to start listening, and creating a
+   * session are all genuinely async, so there is a real window — between a
+   * turn starting and the prompt actually being posted — during which
+   * `abort()` would otherwise be a silent no-op (its early-return guard). A
+   * Stop click landing in that window is recorded here and acted on right
+   * after the prompt POST succeeds, so the interrupt has a live turn to
+   * target.
+   */
+  private pendingAbort = false;
 
   constructor(private readonly ctx: AdapterContext) {
     this.sessionId = ctx.harnessSessionId;
@@ -124,6 +134,16 @@ class OpenCodeRunner implements HarnessRunner {
         method: 'POST',
         body: { prompt: { text: prompt }, delivery: 'steer' },
       });
+
+      // A Stop click that arrived before the prompt POST above completed is
+      // recorded on `pendingAbort` (see its declaration) rather than
+      // dropped; the turn is now live, so the interrupt has something to
+      // target.
+      if (this.pendingAbort) {
+        this.pendingAbort = false;
+        await this.sendInterrupt();
+      }
+
       await turn;
     } finally {
       this.turnActive = false;
@@ -629,6 +649,14 @@ class OpenCodeRunner implements HarnessRunner {
   }
 
   async abort(): Promise<void> {
+    if (!this.sessionId || !this.baseUrl) {
+      this.pendingAbort = true;
+      return;
+    }
+    await this.sendInterrupt();
+  }
+
+  private async sendInterrupt(): Promise<void> {
     if (!this.sessionId || !this.baseUrl) return;
     await this.request(`/api/session/${this.sessionId}/interrupt`, { method: 'POST' }).catch(() => {});
   }

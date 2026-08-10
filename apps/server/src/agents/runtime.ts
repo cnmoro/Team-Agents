@@ -60,6 +60,19 @@ export class UserAbortError extends Error {
  */
 class AgentRuntime {
   private readonly sessions = new Map<string, LiveSession>();
+  /**
+   * `abort()` below only has anything to act on once a session has an entry
+   * in `sessions` — which `runTurn()` only creates for itself, after
+   * provisioning (sandbox creation, resolving the harness install) has
+   * already finished. A Stop click landing before that point — the session
+   * shows "busy" (provisioning counts) from the moment it is created, so
+   * this is easy to hit, not just theoretical — used to be silently
+   * dropped: `abort()` would see no live session and return, and the turn
+   * would go on to run to completion once it actually started, uninterrupted
+   * and with no sign anything had gone wrong. Recorded here and consumed the
+   * moment `runTurn()` registers the session, so the request is never lost.
+   */
+  private readonly pendingAborts = new Set<string>();
 
   isRunning(agentSessionId: string): boolean {
     return this.sessions.has(agentSessionId);
@@ -291,6 +304,11 @@ class AgentRuntime {
         aborted: false,
       };
       this.sessions.set(agentSessionId, live);
+
+      if (this.pendingAborts.delete(agentSessionId)) {
+        live.aborted = true;
+        await live.runner.abort();
+      }
     }
 
     const runner = live.runner;
@@ -335,7 +353,13 @@ class AgentRuntime {
 
   async abort(agentSessionId: string): Promise<void> {
     const live = this.sessions.get(agentSessionId);
-    if (!live) return;
+    if (!live) {
+      // No live runner yet — most commonly the session is still
+      // provisioning. Record the request (see `pendingAborts`'s
+      // declaration) so `runTurn()` honors it the moment it actually starts.
+      this.pendingAborts.add(agentSessionId);
+      return;
+    }
     live.aborted = true;
     await this.cancelQuestions(agentSessionId, 'The run was stopped');
     await live.runner.abort();

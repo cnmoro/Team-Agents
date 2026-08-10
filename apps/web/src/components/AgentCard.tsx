@@ -64,7 +64,16 @@ export function AgentCard({
   const [isConfirmingClose, setIsConfirmingClose] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
 
-  const status = STATUS_META[session.status];
+  // A session recovering from an interrupted run (e.g. a server restart
+  // mid-turn) settles back to 'idle' with `lastError` set — the harness
+  // itself is fine and a follow-up prompt resumes cleanly, but the last run
+  // did not actually finish. Showing the plain "Ready" badge in that state
+  // reads as an all-clear and buries the one signal that something
+  // happened, so it gets its own badge instead of the ordinary idle one.
+  const status =
+    session.status === 'idle' && session.lastError
+      ? { label: 'Interrupted', variant: 'warning' as const, busy: false }
+      : STATUS_META[session.status];
   const trace = traceFor(session.id);
 
   const toggleTrace = async () => {
@@ -112,9 +121,12 @@ export function AgentCard({
         )}
 
         {session.lastError ? (
-          <Text type="supporting" color="primary">
-            {session.lastError}
-          </Text>
+          <HStack gap={2} vAlign="center">
+            <Icon icon="warning" color="warning" size="sm" />
+            <Text type="supporting" color="primary">
+              {session.lastError}
+            </Text>
+          </HStack>
         ) : null}
 
         {messages.length > 0 ? (

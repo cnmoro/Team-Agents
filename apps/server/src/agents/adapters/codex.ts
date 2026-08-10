@@ -96,6 +96,15 @@ class CodexRunner implements HarnessRunner {
   private disposed = false;
   /** Streaming assistant text, keyed by item id. */
   private readonly messageBuffers = new Map<string, string>();
+  /**
+   * Spawning the process and the `turn/start` RPC round-trip are both
+   * genuinely async, so there is a real window — between a turn starting
+   * and `this.currentTurnId` actually being set — during which `abort()`
+   * would otherwise be a silent no-op (its early-return guard). A Stop
+   * click landing in that window is recorded here and acted on the moment
+   * `turn/start` resolves, so the interrupt has a live turn id to target.
+   */
+  private pendingAbort = false;
 
   constructor(private readonly ctx: AdapterContext) {
     this.threadId = ctx.harnessSessionId;
@@ -121,6 +130,15 @@ class CodexRunner implements HarnessRunner {
         input: [{ type: 'text', text: prompt, text_elements: [] }],
       })) as { turn?: { id?: string } };
       this.currentTurnId = result?.turn?.id ?? null;
+
+      // A Stop click that arrived before `turn/start` resolved is recorded
+      // on `pendingAbort` (see its declaration) rather than dropped; the
+      // turn now has a real id to interrupt.
+      if (this.pendingAbort) {
+        this.pendingAbort = false;
+        if (this.currentTurnId) await this.sendInterrupt();
+      }
+
       await turn;
     } finally {
       this.clearIdleTimer();
@@ -540,7 +558,15 @@ class CodexRunner implements HarnessRunner {
   }
 
   async abort(): Promise<void> {
-    if (!this.child || !this.threadId || !this.currentTurnId) return;
+    if (!this.child || !this.threadId || !this.currentTurnId) {
+      this.pendingAbort = true;
+      return;
+    }
+    await this.sendInterrupt();
+  }
+
+  private async sendInterrupt(): Promise<void> {
+    if (!this.threadId || !this.currentTurnId) return;
     await this.call('turn/interrupt', {
       threadId: this.threadId,
       turnId: this.currentTurnId,
