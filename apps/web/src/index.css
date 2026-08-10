@@ -391,7 +391,7 @@
   .ta-agent-meta {
     color: var(--color-text-purple);
     font-family: var(--font-family-code);
-    font-size: var(--font-size-2xs);
+    font-size: var(--font-size-sm);
     overflow-wrap: anywhere;
   }
 
@@ -430,7 +430,7 @@
   .ta-trace-summary {
     min-width: 0;
     font-family: var(--font-family-code);
-    font-size: var(--font-size-2xs);
+    font-size: var(--font-size-sm);
     color: var(--color-text-primary);
     overflow-wrap: anywhere;
     /* Two lines is enough to identify a step; the rest is one click away. */
@@ -453,7 +453,7 @@
     margin: 0;
     padding: var(--spacing-2);
     font-family: var(--font-family-code);
-    font-size: var(--font-size-2xs);
+    font-size: var(--font-size-sm);
     color: var(--color-text-secondary);
     background-color: var(--color-background-muted);
     border-radius: var(--radius-inner);

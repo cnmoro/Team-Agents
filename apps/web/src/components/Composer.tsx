@@ -511,6 +511,10 @@ export function Composer({
                 size="sm"
                 variant="ghost"
                 placeholder="Send to…"
+                // The composer sits at the bottom of the viewport, so the
+                // selector's default overlay positioning can get clipped by
+                // the viewport edge when there isn't room below the trigger.
+                placement="above"
                 hasClear
                 // The collapsed trigger otherwise looks identical whether the
                 // target is "everyone" or a specific agent (both just show a
