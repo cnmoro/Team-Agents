@@ -1,3 +1,5 @@
+import { open } from 'node:fs/promises';
+import path from 'node:path';
 import { Types } from 'mongoose';
 import type {
   AgentSession,
@@ -7,8 +9,10 @@ import type {
   StartAgentInput,
 } from '@teamagents/shared';
 import { stripMentionMarkup } from '@teamagents/shared';
+import { paths } from '../config.js';
 import { AgentEventModel } from '../models/agentEvent.js';
 import { AgentSessionModel, type AgentSessionDoc } from '../models/agentSession.js';
+import { FileModel } from '../models/file.js';
 import { MessageModel } from '../models/message.js';
 import { RepositoryModel } from '../models/repository.js';
 import { UserModel } from '../models/user.js';
@@ -346,6 +350,17 @@ export async function buildContextTranscript(
   const users = await UserModel.find({ _id: { $in: userIds } });
   const nameById = new Map(users.map((u) => [String(u._id), `${u.firstName} ${u.lastName}`.trim()]));
 
+  type RawBlock = {
+    type: string;
+    text?: string;
+    language?: string;
+    code?: string;
+    filename?: string;
+    fileId?: string;
+  };
+  const allBlocks = messages.flatMap((m) => (m.blocks ?? []) as RawBlock[]);
+  const attachmentTextById = await describeAttachmentBlocks(allBlocks);
+
   const lines = messages.map((message) => {
     const author =
       message.authorKind === 'user'
@@ -354,11 +369,13 @@ export async function buildContextTranscript(
           ? 'Agent'
           : 'System';
     const when = (message as unknown as { createdAt: Date }).createdAt.toISOString();
-    const body = (message.blocks ?? [])
-      .map((raw) => {
-        const block = raw as { type: string; text?: string; language?: string; code?: string; filename?: string };
+    const body = ((message.blocks ?? []) as RawBlock[])
+      .map((block) => {
         if (block.type === 'text') return stripMentionMarkup(block.text ?? '');
         if (block.type === 'code') return `\n\`\`\`${block.language ?? ''}\n${block.code ?? ''}\n\`\`\``;
+        if ((block.type === 'file' || block.type === 'image') && block.fileId) {
+          return attachmentTextById.get(block.fileId) ?? `[attachment: ${block.filename ?? 'file'}]`;
+        }
         return `[attachment: ${block.filename ?? 'file'}]`;
       })
       .join('\n')
@@ -374,6 +391,91 @@ export async function buildContextTranscript(
     ...lines,
     '</chat_transcript>',
   ].join('\n');
+}
+
+/** Keeps inlined attachment content bounded regardless of the 25 MB upload cap. */
+const ATTACHMENT_INLINE_LIMIT_BYTES = 64 * 1024;
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Resolves `file`/`image` message blocks to text an agent can actually use.
+ *
+ * Text-like attachments get their real content inlined (bounded to
+ * `ATTACHMENT_INLINE_LIMIT_BYTES`) so an agent given a selected message with a
+ * text/log/code attachment can genuinely read it, not just see its filename.
+ * Images and binary files can't be usefully embedded as text in a CLI-harness
+ * prompt, so they get a clearly-labeled metadata note instead of a bare
+ * `[attachment: name]` tag that silently implies more than the agent can see.
+ */
+async function describeAttachmentBlocks(
+  blocks: Array<{ type: string; fileId?: string; filename?: string }>,
+): Promise<Map<string, string>> {
+  const fileIds = [
+    ...new Set(
+      blocks
+        .filter((b) => (b.type === 'file' || b.type === 'image') && b.fileId && Types.ObjectId.isValid(b.fileId))
+        .map((b) => b.fileId as string),
+    ),
+  ];
+  const result = new Map<string, string>();
+  if (fileIds.length === 0) return result;
+
+  const docs = await FileModel.find({ _id: { $in: fileIds } });
+  const byId = new Map(docs.map((d) => [String(d._id), d]));
+
+  for (const fileId of fileIds) {
+    const doc = byId.get(fileId);
+    if (!doc) continue;
+
+    if (doc.isImage) {
+      const dims = doc.width && doc.height ? `, ${doc.width}x${doc.height}` : '';
+      result.set(
+        fileId,
+        `[attached image: ${doc.filename} (${doc.mimeType}${dims}, ${formatBytes(doc.size)}) — ` +
+          'this transcript is text-only, so the image content itself is not visible here]',
+      );
+      continue;
+    }
+
+    try {
+      const absolutePath = path.join(paths.uploads, doc.storagePath);
+      const readLength = Math.min(ATTACHMENT_INLINE_LIMIT_BYTES, doc.size);
+      const buffer = Buffer.alloc(readLength);
+      const handle = await open(absolutePath, 'r');
+      try {
+        await handle.read(buffer, 0, readLength, 0);
+      } finally {
+        await handle.close();
+      }
+
+      const looksBinary = buffer.subarray(0, readLength).includes(0);
+      if (looksBinary) {
+        result.set(
+          fileId,
+          `[attached file: ${doc.filename} (${doc.mimeType}, ${formatBytes(doc.size)}) — binary file, content not shown]`,
+        );
+        continue;
+      }
+
+      const text = buffer.toString('utf8');
+      const truncated =
+        doc.size > readLength
+          ? `\n[... truncated, showing the first ${formatBytes(readLength)} of ${formatBytes(doc.size)} ...]`
+          : '';
+      result.set(fileId, `[attached file: ${doc.filename}]\n\`\`\`\n${text}${truncated}\n\`\`\``);
+    } catch {
+      // The file record exists but its bytes are unreadable (e.g. deleted from disk);
+      // fall back to metadata rather than failing the whole transcript build.
+      result.set(fileId, `[attached file: ${doc.filename} (${doc.mimeType}, ${formatBytes(doc.size)})]`);
+    }
+  }
+
+  return result;
 }
 
 function deriveTitle(prompt: string): string {

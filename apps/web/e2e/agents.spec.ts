@@ -336,6 +336,52 @@ test.describe('agents', () => {
     await expect(messageText(page, /QUOKKA-VELVET/).last()).toBeVisible({ timeout: 300_000 });
   });
 
+  test('an uploaded text file selected as context lets the agent read its actual contents', async ({
+    page,
+  }) => {
+    test.skip(!hasHarness, 'No agent harness is installed on this host');
+
+    const name = await freshConversation('AttachmentContext');
+    await login(page, ada);
+    await openConversation(page, name);
+
+    // A fact that only exists inside an uploaded file's bytes, never typed
+    // anywhere — the only way the agent can see it is if buildContextTranscript
+    // actually reads the attachment's content, not just its filename.
+    await page.locator('input[type="file"]').setInputFiles({
+      name: 'secret-note.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('The verification code is TRUFFLE-NINETY-NINE.'),
+    });
+    await expect(page.getByText(/secret-note\.txt/)).toBeVisible({ timeout: 20_000 });
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await expect(page.getByText(/secret-note\.txt/).first()).toBeVisible({ timeout: 20_000 });
+
+    await page.getByRole('button', { name: 'Run an agent' }).click();
+    await page
+      .getByRole('textbox', { name: 'Agent prompt' })
+      .fill('Without using any tools, reply with exactly: READY');
+    await page.getByRole('button', { name: 'Start agent' }).click();
+    await expect(messageText(page, 'READY').first()).toBeVisible({ timeout: 300_000 });
+
+    // Select the message carrying the attachment, then ask the agent (no
+    // tools) to recall the code — it can only come from the inlined file
+    // content in the context transcript.
+    await page.getByRole('button', { name: 'Select messages' }).click();
+    await page.locator('.ta-message-row').filter({ hasText: 'secret-note.txt' }).first().click();
+    await expect(page.getByText('1 message selected as agent context')).toBeVisible();
+
+    await page.getByRole('combobox', { name: /Send to/ }).click();
+    await page.getByRole('option', { name: /READY/ }).click();
+
+    await page
+      .getByLabel('Message', { exact: true })
+      .fill('What verification code was in the file I just selected? No tools, just answer from context.');
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+
+    await expect(messageText(page, /TRUFFLE-NINETY-NINE/).last()).toBeVisible({ timeout: 300_000 });
+  });
+
   test('the "Send to..." selector shows a different icon for everyone vs. an agent', async ({
     page,
   }) => {

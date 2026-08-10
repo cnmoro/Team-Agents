@@ -1,7 +1,12 @@
+import { randomUUID } from 'node:crypto';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { paths } from '../config.js';
 import { connectDatabase, disconnectDatabase, mongoose } from '../db.js';
 import { ConversationModel, makeDmKey } from '../models/conversation.js';
+import { FileModel } from '../models/file.js';
 import { MessageModel } from '../models/message.js';
 import { UserModel, buildSearchKey, pickAvatarColor } from '../models/user.js';
 import { buildContextTranscript } from './agentService.js';
@@ -42,6 +47,7 @@ describe('buildContextTranscript', () => {
   afterAll(async () => {
     await mongoose.connection.dropDatabase();
     await disconnectDatabase();
+    await rm(path.join(paths.uploads, '2026-08-10'), { recursive: true, force: true });
   });
 
   beforeEach(async () => {
@@ -49,8 +55,41 @@ describe('buildContextTranscript', () => {
       UserModel.deleteMany({}),
       ConversationModel.deleteMany({}),
       MessageModel.deleteMany({}),
+      FileModel.deleteMany({}),
     ]);
   });
+
+  /** Writes a real file under the uploads dir and its matching FileModel doc. */
+  async function makeStoredFile(opts: {
+    filename: string;
+    mimeType: string;
+    content: Buffer;
+    conversationId: Types.ObjectId;
+    uploadedBy: Types.ObjectId;
+    isImage?: boolean;
+    width?: number;
+    height?: number;
+  }) {
+    const relativeDir = '2026-08-10';
+    const storageName = `${randomUUID()}${path.extname(opts.filename)}`;
+    const relativePath = path.join(relativeDir, storageName);
+    const absolutePath = path.join(paths.uploads, relativePath);
+    await mkdir(path.dirname(absolutePath), { recursive: true });
+    await writeFile(absolutePath, opts.content);
+
+    return FileModel.create({
+      filename: opts.filename,
+      mimeType: opts.mimeType,
+      size: opts.content.length,
+      sha256: 'test',
+      storagePath: relativePath,
+      uploadedBy: opts.uploadedBy,
+      conversationId: opts.conversationId,
+      isImage: opts.isImage ?? false,
+      width: opts.width ?? null,
+      height: opts.height ?? null,
+    });
+  }
 
   it('renders mentions as plain @Name instead of leaking the wire markup to the agent', async () => {
     const ada = await makeUser('ada');
@@ -88,5 +127,140 @@ describe('buildContextTranscript', () => {
 
   it('returns an empty string for no message ids', async () => {
     expect(await buildContextTranscript(String(new Types.ObjectId()), [])).toBe('');
+  });
+
+  it('inlines the real content of a text-file attachment instead of just its filename', async () => {
+    const ada = await makeUser('ada');
+    const alan = await makeUser('alan');
+    const conversation = await ConversationModel.create({
+      type: 'dm',
+      memberIds: [ada._id, alan._id],
+      createdBy: ada._id,
+      dmKey: makeDmKey(String(ada._id), String(alan._id)),
+      lastMessageAt: new Date(),
+    });
+
+    const secret = 'THE-SECRET-CODE-IS-QUOKKA-42';
+    const file = await makeStoredFile({
+      filename: 'notes.txt',
+      mimeType: 'text/plain',
+      content: Buffer.from(`some notes\n${secret}\nmore notes`),
+      conversationId: conversation._id,
+      uploadedBy: ada._id,
+    });
+
+    const message = await MessageModel.create({
+      conversationId: conversation._id,
+      kind: 'user',
+      authorKind: 'user',
+      authorUserId: ada._id,
+      blocks: [
+        {
+          type: 'file',
+          fileId: String(file._id),
+          filename: 'notes.txt',
+          mimeType: 'text/plain',
+          size: file.size,
+        },
+      ],
+    });
+
+    const transcript = await buildContextTranscript(String(conversation._id), [
+      String(message._id),
+    ]);
+
+    expect(transcript).toContain(secret);
+    expect(transcript).toContain('notes.txt');
+    expect(transcript).not.toBe('[attachment: notes.txt]');
+  });
+
+  it('describes an image attachment with metadata instead of a bare filename tag, without claiming to show its content', async () => {
+    const ada = await makeUser('ada');
+    const alan = await makeUser('alan');
+    const conversation = await ConversationModel.create({
+      type: 'dm',
+      memberIds: [ada._id, alan._id],
+      createdBy: ada._id,
+      dmKey: makeDmKey(String(ada._id), String(alan._id)),
+      lastMessageAt: new Date(),
+    });
+
+    const file = await makeStoredFile({
+      filename: 'diagram.png',
+      mimeType: 'image/png',
+      content: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+      conversationId: conversation._id,
+      uploadedBy: ada._id,
+      isImage: true,
+      width: 10,
+      height: 5,
+    });
+
+    const message = await MessageModel.create({
+      conversationId: conversation._id,
+      kind: 'user',
+      authorKind: 'user',
+      authorUserId: ada._id,
+      blocks: [
+        {
+          type: 'image',
+          fileId: String(file._id),
+          filename: 'diagram.png',
+          mimeType: 'image/png',
+          size: file.size,
+        },
+      ],
+    });
+
+    const transcript = await buildContextTranscript(String(conversation._id), [
+      String(message._id),
+    ]);
+
+    expect(transcript).toContain('diagram.png');
+    expect(transcript).toContain('10x5');
+    expect(transcript).toContain('not visible');
+  });
+
+  it('flags a binary (non-text) file attachment without dumping raw bytes into the transcript', async () => {
+    const ada = await makeUser('ada');
+    const alan = await makeUser('alan');
+    const conversation = await ConversationModel.create({
+      type: 'dm',
+      memberIds: [ada._id, alan._id],
+      createdBy: ada._id,
+      dmKey: makeDmKey(String(ada._id), String(alan._id)),
+      lastMessageAt: new Date(),
+    });
+
+    const file = await makeStoredFile({
+      filename: 'archive.bin',
+      mimeType: 'application/octet-stream',
+      content: Buffer.from([0x00, 0x01, 0x02, 0x03, 0xff, 0x00]),
+      conversationId: conversation._id,
+      uploadedBy: ada._id,
+    });
+
+    const message = await MessageModel.create({
+      conversationId: conversation._id,
+      kind: 'user',
+      authorKind: 'user',
+      authorUserId: ada._id,
+      blocks: [
+        {
+          type: 'file',
+          fileId: String(file._id),
+          filename: 'archive.bin',
+          mimeType: 'application/octet-stream',
+          size: file.size,
+        },
+      ],
+    });
+
+    const transcript = await buildContextTranscript(String(conversation._id), [
+      String(message._id),
+    ]);
+
+    expect(transcript).toContain('archive.bin');
+    expect(transcript).toContain('binary file, content not shown');
   });
 });

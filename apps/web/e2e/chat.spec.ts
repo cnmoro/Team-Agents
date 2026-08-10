@@ -268,6 +268,144 @@ test.describe('chat', () => {
     await expect(page.getByText(/dot\.png/)).toBeVisible({ timeout: 20_000 });
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await expect(page.locator('img.ta-image')).toBeVisible({ timeout: 20_000 });
+
+    // Clicking the sent thumbnail opens a full-view lightbox.
+    await page.locator('img.ta-image').last().click();
+    await expect(page.locator('.ta-lightbox')).toBeVisible({ timeout: 5_000 });
+    await page.locator('.ta-lightbox').click({ position: { x: 5, y: 5 } });
+    await expect(page.locator('.ta-lightbox')).toHaveCount(0);
+  });
+
+  test('uploads several files at once and sends them all as one message', async ({ page }) => {
+    await apiAs(ada, 'POST', '/api/conversations', { type: 'dm', memberIds: [alan.id] });
+    await login(page, ada);
+    await openConversation(page, alan.displayName);
+
+    await page.locator('input[type="file"]').setInputFiles([
+      { name: 'multi-a.txt', mimeType: 'text/plain', buffer: Buffer.from('file a') },
+      { name: 'multi-b.txt', mimeType: 'text/plain', buffer: Buffer.from('file b') },
+      { name: 'multi-c.py', mimeType: 'text/x-python', buffer: Buffer.from('print("c")') },
+    ]);
+    await expect(page.getByText(/multi-a\.txt/)).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(/multi-b\.txt/)).toBeVisible();
+    await expect(page.getByText(/multi-c\.py/)).toBeVisible();
+
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+
+    await expect(page.getByText(/multi-a\.txt/).first()).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(/multi-b\.txt/).first()).toBeVisible();
+    await expect(page.getByText(/multi-c\.py/).first()).toBeVisible();
+  });
+
+  test('a non-image attachment renders as a download card, not an inline preview', async ({ page }) => {
+    // A conversation of its own: the shared ada/alan DM accumulates messages
+    // (including images) across earlier tests in this file, which would make
+    // the "no img.ta-image on the page" assertion below unreliable.
+    await apiAs(ada, 'POST', '/api/conversations', {
+      type: 'group',
+      memberIds: [alan.id],
+      name: `NonImage ${Date.now()}`,
+    });
+    await login(page, ada);
+    await openConversation(page, /^NonImage /);
+
+    await page.locator('input[type="file"]').setInputFiles({
+      name: 'report.pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('%PDF-1.4 fake pdf content for e2e testing'),
+    });
+    await expect(page.getByText(/report\.pdf/)).toBeVisible({ timeout: 20_000 });
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+
+    await expect(page.getByText(/report\.pdf/).first()).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole('button', { name: /Download/ }).first()).toBeVisible();
+    // It must not be mistaken for an image and rendered inline.
+    await expect(page.locator('img.ta-image')).toHaveCount(0);
+  });
+
+  test('a filename with HTML-like content renders as inert text, no XSS', async ({ page }) => {
+    await apiAs(ada, 'POST', '/api/conversations', { type: 'dm', memberIds: [alan.id] });
+    await login(page, ada);
+    await openConversation(page, alan.displayName);
+
+    let dialogFired = false;
+    page.on('dialog', async (dialog) => {
+      dialogFired = true;
+      await dialog.dismiss();
+    });
+
+    // No path separators here on purpose — `path.basename` sanitization
+    // (tested separately below) would otherwise strip everything before the
+    // last slash, hiding this test's actual XSS check.
+    await page.locator('input[type="file"]').setInputFiles({
+      name: '<img src=x onerror=alert(1)>.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('xss filename content'),
+    });
+    await expect(page.getByText(/onerror/)).toBeVisible({ timeout: 20_000 });
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await expect(page.getByText(/onerror/).first()).toBeVisible({ timeout: 20_000 });
+
+    // No literal <img onerror> tag should have made it into the DOM, and no
+    // alert() should have fired — the filename must render as inert text.
+    const html = await page.content();
+    expect(/<img[^>]*onerror=alert/i.test(html)).toBe(false);
+    expect(dialogFired).toBe(false);
+    // The app must still be alive, not crashed by the weird name.
+    await expect(page.locator('.ta-shell')).toBeVisible();
+  });
+
+  test('a path-traversal-style filename is reduced to its basename, no crash', async ({ page }) => {
+    await apiAs(ada, 'POST', '/api/conversations', { type: 'dm', memberIds: [alan.id] });
+    await login(page, ada);
+    await openConversation(page, alan.displayName);
+
+    await page.locator('input[type="file"]').setInputFiles({
+      name: '../../etc/passed.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('path traversal attempt content'),
+    });
+    // The server's sanitizeFilename() takes path.basename(), so only the
+    // final path segment should ever be shown or stored.
+    await expect(page.getByText('passed.txt', { exact: false })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(/\.\.\//)).toHaveCount(0);
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await expect(page.getByText('passed.txt', { exact: false }).first()).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator('.ta-shell')).toBeVisible();
+  });
+
+  test('a very long filename (200+ chars) and unicode/emoji filenames upload and send without breaking the layout', async ({
+    page,
+  }) => {
+    await apiAs(ada, 'POST', '/api/conversations', { type: 'dm', memberIds: [alan.id] });
+    await login(page, ada);
+    await openConversation(page, alan.displayName);
+
+    const longName = `${'a'.repeat(220)}.txt`;
+    await page.locator('input[type="file"]').setInputFiles({
+      name: longName,
+      mimeType: 'text/plain',
+      buffer: Buffer.from('long filename content'),
+    });
+    await expect(page.getByText(/a{20,}/)).toBeVisible({ timeout: 20_000 });
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await expect(page.getByText(/a{20,}/).first()).toBeVisible({ timeout: 20_000 });
+
+    const unicodeName = '😀🎉_résumé_文件.txt';
+    await page.locator('input[type="file"]').setInputFiles({
+      name: unicodeName,
+      mimeType: 'text/plain',
+      buffer: Buffer.from('unicode filename content'),
+    });
+    await expect(page.getByText(unicodeName, { exact: false })).toBeVisible({ timeout: 20_000 });
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await expect(page.getByText(unicodeName, { exact: false }).first()).toBeVisible({ timeout: 20_000 });
+
+    // Neither weird filename should have blown out the page horizontally.
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(1);
   });
 
   test('renders markdown but leaves code blocks alone', async ({ page }) => {
