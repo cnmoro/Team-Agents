@@ -20,7 +20,7 @@ import { serializeAgentSession } from '../services/serialize.js';
 import { destroySandbox, ensureSandbox } from '../sandbox/sandboxManager.js';
 import { ensureSshConfigFile, provisionRepository, redactSecrets, repoDirName } from './gitProvisioner.js';
 import { resolveHarness } from './harnessRegistry.js';
-import { runtime } from './runtime.js';
+import { runtime, UserAbortError } from './runtime.js';
 import { hub } from '../realtime/hub.js';
 import { SANDBOX_WORK } from '../sandbox/bubblewrap.js';
 
@@ -159,9 +159,16 @@ async function provisionAndRun(
     const fullPrompt = contextTranscript ? `${contextTranscript}\n\n${prompt}` : prompt;
     await runtime.runTurn(session, fullPrompt, log);
   } catch (error) {
-    const message = (error as Error).message;
     const fresh = await AgentSessionModel.findById(agentSessionId);
     if (!fresh) return;
+    if (error instanceof UserAbortError) {
+      // The user clicked Stop before the first turn finished. runtime.runTurn()
+      // already left the session in a clean 'idle' state — this is not a
+      // failure, so it must not read like one (no "I could not start", no
+      // error status) even though it hit this same catch block.
+      return;
+    }
+    const message = (error as Error).message;
     await runtime.emit(fresh, { type: 'error', summary: message, detail: message });
     await createMessage({
       conversationId: String(fresh.conversationId),

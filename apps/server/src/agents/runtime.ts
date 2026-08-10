@@ -30,6 +30,23 @@ interface LiveSession {
   /** Serializes turns: a harness handles one prompt at a time. */
   queue: Promise<void>;
   questions: Map<string, PendingQuestion>;
+  /**
+   * Set by `abort()` just before asking the runner to stop, and read by the
+   * turn currently in flight so it can tell "the user clicked Stop" apart
+   * from "the harness genuinely failed" — the two look identical to the
+   * runner (both surface as the in-flight promise rejecting), so without this
+   * flag a deliberate stop renders in the UI as a scary "Failed" status and,
+   * on a first turn, a chat message claiming the agent "could not start".
+   */
+  aborted: boolean;
+}
+
+/** Thrown when a turn ends because a human clicked Stop, not because the harness failed. */
+export class UserAbortError extends Error {
+  constructor() {
+    super('The run was stopped before it finished.');
+    this.name = 'UserAbortError';
+  }
 }
 
 /**
@@ -244,6 +261,7 @@ class AgentRuntime {
         runner: adapter.createRunner(context),
         queue: Promise.resolve(),
         questions: new Map(),
+        aborted: false,
       };
       this.sessions.set(agentSessionId, live);
     }
@@ -254,6 +272,7 @@ class AgentRuntime {
     const turn = live.queue.then(async () => {
       const fresh = await AgentSessionModel.findById(agentSessionId);
       if (!fresh || fresh.status === 'closed') throw new Error('The agent session has been closed');
+      live!.aborted = false;
       await this.setStatus(fresh, 'running', null);
       try {
         await runner.runTurn(prompt);
@@ -264,8 +283,16 @@ class AgentRuntime {
           await this.setStatus(after, 'idle', null);
         }
       } catch (error) {
-        const message = (error as Error).message;
         const after = await AgentSessionModel.findById(agentSessionId);
+        if (live!.aborted) {
+          // A human clicked Stop: this is an expected, clean end to the turn,
+          // not a failure, so it must not read like one in the UI or chat.
+          if (after && after.status !== 'closed') {
+            await this.setStatus(after, 'idle', 'The run was stopped before it finished.');
+          }
+          throw new UserAbortError();
+        }
+        const message = (error as Error).message;
         if (after && after.status !== 'closed') {
           await this.emit(after, { type: 'error', summary: message, detail: message });
           await this.setStatus(after, 'error', message);
@@ -282,6 +309,7 @@ class AgentRuntime {
   async abort(agentSessionId: string): Promise<void> {
     const live = this.sessions.get(agentSessionId);
     if (!live) return;
+    live.aborted = true;
     await this.cancelQuestions(agentSessionId, 'The run was stopped');
     await live.runner.abort();
   }
