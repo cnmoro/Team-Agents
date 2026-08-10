@@ -170,6 +170,7 @@ export function AgentStarterDialog({
                       <CheckboxInput
                         label={repository.name}
                         description={repository.url}
+                        style={{ minWidth: 0, flex: '1 1 auto', wordBreak: 'break-all' }}
                         value={selectedRepoIds.includes(repository.id)}
                         onChange={(checked) =>
                           setSelectedRepoIds((current) =>

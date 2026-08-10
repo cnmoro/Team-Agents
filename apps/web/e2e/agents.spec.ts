@@ -91,6 +91,46 @@ test.describe('agents', () => {
     expect(box!.x + box!.width).toBeLessThanOrEqual(390);
   });
 
+  test('the repository URL in the agent dialog wraps instead of overflowing its card on a narrow phone width', async ({
+    page,
+  }) => {
+    // Regression guard: a repository's git URL (no spaces, so nothing to wrap
+    // at by default) rendered as the CheckboxInput's `description` and, on a
+    // real 390px viewport, silently overflowed the repository card's right
+    // edge (and the viewport itself) since the card clips with
+    // `overflow: clip` and nothing upstream constrained the description's
+    // width. The tail of the URL — including which host/path an agent was
+    // about to clone from — was invisible with no scrollbar or affordance to
+    // reveal it. Fixed by giving the CheckboxInput a `minWidth: 0` +
+    // `wordBreak: break-all` style so the long unbroken URL wraps onto
+    // multiple lines within the card instead of pushing the layout wide.
+    const repoName = `mobile-url-wrap-repo-${Date.now()}`;
+    const longUrl = 'https://example.invalid/a/very/long/unbroken/path/segment/that/has/no/spaces/to/wrap/at/mobile-url-wrap-repo.git';
+    await apiAs(ada, 'POST', '/api/repositories', { name: repoName, url: longUrl });
+    await apiAs(ada, 'POST', '/api/conversations', { type: 'dm', memberIds: [alan.id] });
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await login(page, ada);
+    await openConversation(page, alan.displayName);
+
+    await page.getByRole('button', { name: 'Run an agent' }).click();
+    const checkbox = page.getByRole('checkbox', { name: new RegExp(repoName) });
+    await expect(checkbox).toBeVisible();
+
+    const repoCard = page.locator('.astryx-card', { has: checkbox });
+    const urlText = repoCard.getByText(longUrl);
+    await expect(urlText).toBeVisible();
+
+    const urlBox = await urlText.boundingBox();
+    const cardBox = await repoCard.boundingBox();
+    expect(urlBox).not.toBeNull();
+    expect(cardBox).not.toBeNull();
+    // The full URL text must stay within both the card's own bounds and the
+    // viewport itself, not just avoid the page growing a horizontal scrollbar.
+    expect(urlBox!.x + urlBox!.width).toBeLessThanOrEqual(cardBox!.x + cardBox!.width + 1);
+    expect(urlBox!.x + urlBox!.width).toBeLessThanOrEqual(390);
+  });
+
   test('typing @Agent opens the agent dialog', async ({ page }) => {
     await apiAs(ada, 'POST', '/api/conversations', { type: 'dm', memberIds: [alan.id] });
     await login(page, ada);
