@@ -1,5 +1,6 @@
 import type { Server as HttpServer } from 'node:http';
 import { Server as SocketServer, type Socket } from 'socket.io';
+import { isValidObjectId } from 'mongoose';
 import type {
   AgentEvent,
   AgentQuestionPayload,
@@ -35,7 +36,7 @@ const conversationRoom = (conversationId: string) => `conversation:${conversatio
  * best-effort — every event it carries is also reconstructible from the REST
  * API, which is what makes reconnects safe.
  */
-class RealtimeHub {
+export class RealtimeHub {
   private io: SocketServer<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData> | null =
     null;
   /** userId -> number of live sockets, for presence. */
@@ -94,7 +95,21 @@ class RealtimeHub {
     socket.emit('presence:sync', { userIds: [...this.connections.keys()] });
 
     socket.on('conversation:subscribe', ({ conversationId }) => {
-      void socket.join(conversationRoom(conversationId));
+      void (async () => {
+        // Membership must be re-checked here, not assumed: unlike the
+        // auto-join above (computed once, from a trusted server-side query at
+        // connect time), this handler takes an arbitrary id straight from the
+        // client. Without this check any authenticated socket could join any
+        // conversation's room just by naming its id, and would then receive
+        // that conversation's message:update/message:delete/agent:* stream
+        // regardless of actual membership.
+        if (!isValidObjectId(conversationId)) return;
+        const isMember = await ConversationModel.exists({
+          _id: conversationId,
+          memberIds: userId,
+        });
+        if (isMember) await socket.join(conversationRoom(conversationId));
+      })();
     });
     socket.on('conversation:unsubscribe', ({ conversationId }) => {
       void socket.leave(conversationRoom(conversationId));
@@ -130,6 +145,18 @@ class RealtimeHub {
   async addUserToConversationRoom(userId: string, conversationId: string): Promise<void> {
     const sockets = await this.io?.in(userRoom(userId)).fetchSockets();
     for (const socket of sockets ?? []) await socket.join(conversationRoom(conversationId));
+  }
+
+  /**
+   * Evicts a user's live sockets from a conversation room (after being
+   * removed from a group, or leaving one). Without this, an already-open tab
+   * keeps receiving that conversation's message:update/message:delete/agent:*
+   * events indefinitely — the room membership is otherwise never revisited
+   * after the initial auto-join at connect time.
+   */
+  async removeUserFromConversationRoom(userId: string, conversationId: string): Promise<void> {
+    const sockets = await this.io?.in(userRoom(userId)).fetchSockets();
+    for (const socket of sockets ?? []) await socket.leave(conversationRoom(conversationId));
   }
 
   emitMessage(message: MessageWithAuthor, perViewerConversation: Map<string, ConversationSummary>): void {

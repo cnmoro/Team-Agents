@@ -181,6 +181,9 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
       await hub.addUserToConversationRoom(memberId, id);
       hub.emitConversationNew(memberId, await buildSummary(conversation, memberId));
     }
+    for (const memberId of input.removeMemberIds ?? []) {
+      await hub.removeUserFromConversationRoom(memberId, id);
+    }
     await hub.pushConversationToMembers(id);
 
     return buildSummary(conversation, viewerId);
@@ -217,6 +220,7 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
       authorKind: 'system',
       blocks: [{ type: 'text', text: `${request.currentUser.firstName} left the group.` }],
     });
+    await hub.removeUserFromConversationRoom(viewerId, id);
     await hub.pushConversationToMembers(id);
     return { ok: true };
   });
