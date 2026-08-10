@@ -116,6 +116,13 @@ export const config = {
   opencodeModel: str('OPENCODE_MODEL', ''),
 
   /**
+   * Optional model override for Codex. A sandbox has its own home, so without
+   * this Codex falls back to whatever model the seeded (filtered)
+   * `config.toml` names, or its own built-in default if neither is set.
+   */
+  codexModel: str('CODEX_MODEL', ''),
+
+  /**
    * Where to read harness logins from when seeding a sandbox. Defaults to the
    * server user's home directory, which is what you want on a normal host. In a
    * container it lets the operator's real credentials be mounted somewhere

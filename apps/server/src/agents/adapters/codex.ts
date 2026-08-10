@@ -1,5 +1,8 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import type { QuestionOption } from '@teamagents/shared';
+import { config } from '../../config.js';
 import { spawnInSandbox, SANDBOX_WORK } from '../../sandbox/sandboxManager.js';
 import { NdjsonReader, ndjsonLine, summarize } from '../ndjson.js';
 import { CHAT_GUIDANCE, type AdapterContext, type HarnessAdapter, type HarnessRunner } from '../types.js';
@@ -21,6 +24,51 @@ import { CHAT_GUIDANCE, type AdapterContext, type HarnessAdapter, type HarnessRu
 const SANDBOX_MODE = 'danger-full-access';
 const APPROVAL_POLICY = 'on-request';
 const TURN_IDLE_TIMEOUT_MS = 45 * 60 * 1000;
+
+/**
+ * Builds the sandbox's `.codex/config.toml`, deliberately narrowed to just the
+ * `model` key, from whatever `harnessRegistry.ts`'s `AUTH_SEEDS` copied in
+ * verbatim from the operator's own `~/.codex/config.toml`.
+ *
+ * `AUTH_SEEDS`'s own comment says the intent is "credentials only,
+ * deliberately" (to avoid dragging the operator's hooks/MCP servers/settings
+ * into every agent run) — but for Codex that seed list includes the *entire*
+ * `config.toml` file with no filtering step at all, so the comment's promise
+ * was never actually kept for this harness. On a real host that file can carry
+ * a `[projects."/abs/path"]` trust table (every project directory the
+ * operator has ever trusted — potentially sensitive names/paths with no
+ * relation to the sandboxed repo), TUI nudge/notice state, and other
+ * host-machine-specific settings, all of which would otherwise leak
+ * unfiltered into every Codex sandbox for every user of this app. This is the
+ * same class of bug the OpenCode adapter had (`opencode.ts`'s
+ * `buildSandboxOpencodeConfig`) — including that bug's most serious
+ * consequence, an unrelated setting silently disabling harness behavior (there
+ * it was `compaction.auto: false`) — so the same narrow-to-one-field pattern
+ * is applied here. `model` is kept because it is the one setting with a real,
+ * documented purpose: a sandbox has its own home, so without it Codex would
+ * fall back to its built-in default model, which the operator's account may
+ * not have access to. Kept as a standalone pure function so this filtering is
+ * unit-testable without a live sandbox.
+ */
+export function buildSandboxCodexConfig(seededRaw: string | null, codexModelEnv: string): string {
+  let seededModel: string | undefined;
+  if (seededRaw) {
+    for (const line of seededRaw.split('\n')) {
+      const trimmed = line.trim();
+      // TOML section headers end the top-level key scan; `model` only counts
+      // if it appears before any `[section]`, matching where Codex itself
+      // writes it.
+      if (trimmed.startsWith('[')) break;
+      const match = trimmed.match(/^model\s*=\s*"([^"]*)"$/);
+      if (match) {
+        seededModel = match[1];
+        break;
+      }
+    }
+  }
+  const model = codexModelEnv || seededModel;
+  return model ? `model = ${JSON.stringify(model)}\n` : '';
+}
 
 interface JsonRpcMessage {
   jsonrpc?: string;
@@ -80,8 +128,25 @@ class CodexRunner implements HarnessRunner {
     }
   }
 
+  /** Overwrites the sandbox's raw seeded `config.toml` with the filtered form. */
+  private async writeConfig(): Promise<void> {
+    const configDir = path.join(this.ctx.sandbox.homeDir, '.codex');
+    await mkdir(configDir, { recursive: true });
+    const configPath = path.join(configDir, 'config.toml');
+
+    let seededRaw: string | null = null;
+    try {
+      seededRaw = await readFile(configPath, 'utf8');
+    } catch {
+      // No seeded config, or it is unreadable: start from scratch.
+    }
+
+    await writeFile(configPath, buildSandboxCodexConfig(seededRaw, config.codexModel));
+  }
+
   private async startProcess(): Promise<void> {
     const { ctx } = this;
+    await this.writeConfig();
     const args = ['app-server', '--stdio'];
 
     await ctx.emit({
