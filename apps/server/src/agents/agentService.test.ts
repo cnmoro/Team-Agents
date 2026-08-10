@@ -9,7 +9,8 @@ import { ConversationModel, makeDmKey } from '../models/conversation.js';
 import { FileModel } from '../models/file.js';
 import { MessageModel } from '../models/message.js';
 import { UserModel, buildSearchKey, pickAvatarColor } from '../models/user.js';
-import { buildContextTranscript } from './agentService.js';
+import { AgentSessionModel } from '../models/agentSession.js';
+import { buildContextTranscript, closeAgent } from './agentService.js';
 
 /**
  * Runs against a real MongoDB, on its own database.
@@ -262,5 +263,74 @@ describe('buildContextTranscript', () => {
 
     expect(transcript).toContain('archive.bin');
     expect(transcript).toContain('binary file, content not shown');
+  });
+});
+
+/**
+ * Regression guard, 23rd QA pass: two concurrent "Close & erase" calls on the
+ * same session (a double-click, or two different users both hitting it at
+ * once — reproduced live in the QA lab via two real users' bearer tokens
+ * racing `DELETE /api/agents/:id`) each ran the full close side-effect chain
+ * (teardown, sandbox destroy, a "closed the agent" system message, a
+ * conversation-summary broadcast) with no guard against the session already
+ * being closed — unlike `promptExistingAgent`, which does check. The
+ * observable symptom was two separate "X closed the agent ... and cleared
+ * its sandbox." system messages landing in the chat for one real close,
+ * attributed to two different users, even though only one of them "really"
+ * closed anything.
+ */
+describe('closeAgent', () => {
+  beforeAll(async () => {
+    await connectDatabase(TEST_URI);
+  });
+
+  afterAll(async () => {
+    await mongoose.connection.dropDatabase();
+    await disconnectDatabase();
+  });
+
+  beforeEach(async () => {
+    await Promise.all([
+      UserModel.deleteMany({}),
+      ConversationModel.deleteMany({}),
+      MessageModel.deleteMany({}),
+      AgentSessionModel.deleteMany({}),
+    ]);
+  });
+
+  it('two concurrent closes of the same session only post one "closed" system message', async () => {
+    const ada = await makeUser('ada');
+    const alan = await makeUser('alan');
+    const conversation = await ConversationModel.create({
+      type: 'group',
+      memberIds: [ada._id, alan._id],
+      createdBy: ada._id,
+      title: 'Close race',
+    });
+
+    const session = await AgentSessionModel.create({
+      conversationId: conversation._id,
+      harness: 'claude-code',
+      title: 'Close race session',
+      status: 'idle',
+      createdBy: ada._id,
+    });
+
+    // Two different users racing the real close path concurrently, exactly
+    // as reproduced live via two bearer tokens hitting DELETE at once.
+    await Promise.all([
+      closeAgent(String(session._id), String(ada._id)),
+      closeAgent(String(session._id), String(alan._id)),
+    ]);
+
+    const final = await AgentSessionModel.findById(session._id);
+    expect(final?.status).toBe('closed');
+
+    const closeMessages = await MessageModel.find({
+      conversationId: conversation._id,
+      kind: 'system',
+      'blocks.text': { $regex: /closed the agent/ },
+    });
+    expect(closeMessages).toHaveLength(1);
   });
 });

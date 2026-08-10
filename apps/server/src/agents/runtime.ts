@@ -146,6 +146,14 @@ class AgentRuntime {
       say: async (text) => {
         const trimmed = text.trim();
         if (!trimmed) return;
+        // A close (sandbox erased, "Session closed" system message already
+        // posted) can race a turn that is still mid-flight — e.g. Stop and
+        // Close & erase fired at nearly the same moment. Without this check
+        // the harness's own in-flight output still lands as a fresh chat
+        // bubble after the "closed" message, making an already-terminated
+        // session look like it's still doing something.
+        const fresh = await AgentSessionModel.findById(agentSessionId).select('status').lean();
+        if (!fresh || fresh.status === 'closed') return;
         await createMessage({
           conversationId,
           kind: 'agent_output',

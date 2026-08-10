@@ -149,14 +149,19 @@ async function provisionAndRun(
     const failed = session.repositories.filter((r) => r.cloneError);
     if (failed.length > 0 && failed.length === session.repositories.length) {
       const detail = failed.map((r) => `${r.name}: ${r.cloneError}`).join('; ');
-      await createMessage({
-        conversationId: String(session.conversationId),
-        kind: 'agent_output',
-        authorKind: 'agent',
-        agentSessionId,
-        blocks: [{ type: 'text', text: `I could not clone any repository. ${redactSecrets(detail)}` }],
-      });
-      await runtime.setStatus(session, 'error', detail);
+      // A close can race provisioning itself, not just a running turn — check
+      // fresh status before posting, same reasoning as the catch block below.
+      const stillOpen = await AgentSessionModel.findById(agentSessionId).select('status').lean();
+      if (stillOpen && stillOpen.status !== 'closed') {
+        await createMessage({
+          conversationId: String(session.conversationId),
+          kind: 'agent_output',
+          authorKind: 'agent',
+          agentSessionId,
+          blocks: [{ type: 'text', text: `I could not clone any repository. ${redactSecrets(detail)}` }],
+        });
+        await runtime.setStatus(session, 'error', detail);
+      }
       return;
     }
 
@@ -173,6 +178,11 @@ async function provisionAndRun(
       return;
     }
     const message = (error as Error).message;
+    // The same close-races-a-still-provisioning-session case caught by say()
+    // above and the clone-failure message: if this session was already
+    // closed while this error was unwinding, don't post a ghost "I could not
+    // start" bubble after the "closed" system message the user already saw.
+    if (fresh.status === 'closed') return;
     await runtime.emit(fresh, { type: 'error', summary: message, detail: message });
     await createMessage({
       conversationId: String(fresh.conversationId),
@@ -245,13 +255,28 @@ export async function abortAgent(agentSessionId: string, userId: string): Promis
  */
 export async function closeAgent(agentSessionId: string, userId: string): Promise<AgentSession> {
   const session = await loadSessionForMember(agentSessionId, userId);
+
+  // Atomically claim the close so two concurrent callers (a double-click, or
+  // two different users both hitting "Close & erase" on the same session)
+  // can't both run teardown and both post their own "closed the agent"
+  // system message. Whoever's update actually flips the status wins; the
+  // loser just returns the already-closed session, same as if it had lost a
+  // simple sequential race.
+  const claimed = await AgentSessionModel.findOneAndUpdate(
+    { _id: agentSessionId, status: { $ne: 'closed' } },
+    { $set: { status: 'closed', sandboxPath: null, closedAt: new Date() } },
+    { new: true },
+  );
+  if (!claimed) {
+    const fresh = await loadSessionForMember(agentSessionId, userId);
+    return serializeAgentSession(fresh);
+  }
+  session.status = claimed.status;
+  session.sandboxPath = claimed.sandboxPath;
+  session.closedAt = claimed.closedAt;
+
   await runtime.shutdownSession(agentSessionId, 'The agent session was closed');
   await destroySandbox(agentSessionId);
-
-  session.status = 'closed';
-  session.sandboxPath = null;
-  session.closedAt = new Date();
-  await session.save();
 
   await runtime.emit(session, { type: 'status', summary: 'Session closed and sandbox erased' });
   const user = await UserModel.findById(userId);

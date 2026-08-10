@@ -3,8 +3,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { connectDatabase, disconnectDatabase, mongoose } from '../db.js';
 import { ConversationModel, makeDmKey } from '../models/conversation.js';
 import { AgentSessionModel } from '../models/agentSession.js';
+import { MessageModel } from '../models/message.js';
 import { UserModel, buildSearchKey, pickAvatarColor } from '../models/user.js';
 import { runtime } from './runtime.js';
+import type { HarnessInstall } from './harnessRegistry.js';
 
 /**
  * Runs against a real MongoDB, on its own database.
@@ -50,7 +52,12 @@ describe('runtime.setStatus', () => {
   });
 
   beforeEach(async () => {
-    await Promise.all([UserModel.deleteMany({}), ConversationModel.deleteMany({}), AgentSessionModel.deleteMany({})]);
+    await Promise.all([
+      UserModel.deleteMany({}),
+      ConversationModel.deleteMany({}),
+      AgentSessionModel.deleteMany({}),
+      MessageModel.deleteMany({}),
+    ]);
   });
 
   it('cannot resurrect a session that was already closed, even with a stale in-memory copy', async () => {
@@ -115,5 +122,122 @@ describe('runtime.setStatus', () => {
 
     const final = await AgentSessionModel.findById(session._id);
     expect(final?.status).toBe('running');
+  });
+});
+
+/**
+ * Regression guard, 23rd QA pass: aborting a run ("Stop") while the session
+ * is simultaneously closed from Settings ("Close & erase") is a genuine
+ * concurrent race between two different user actions on the same session.
+ * Reproduced live in the QA lab (concurrent `POST .../abort` +
+ * `DELETE /api/agents/:id` on a mid-flight session): the harness's own
+ * in-flight output, and the "I could not start" message from the losing
+ * side of the race, both still landed as new chat bubbles *after* the
+ * "Session closed and sandbox erased" system message the user had already
+ * seen — an already-terminated session going on to look like it was still
+ * doing something. The session document itself was never corrupted (the
+ * 22nd pass's `setStatus` guard already prevents that); this is specifically
+ * about the adapter's streamed-output path (`say()`, built in
+ * `buildContext()`), which posted straight to the conversation with no
+ * status check at all.
+ */
+describe('AgentRuntime buildContext().say', () => {
+  beforeAll(async () => {
+    await connectDatabase(TEST_URI);
+  });
+
+  afterAll(async () => {
+    await mongoose.connection.dropDatabase();
+    await disconnectDatabase();
+  });
+
+  beforeEach(async () => {
+    await Promise.all([
+      UserModel.deleteMany({}),
+      ConversationModel.deleteMany({}),
+      AgentSessionModel.deleteMany({}),
+      MessageModel.deleteMany({}),
+    ]);
+  });
+
+  const fakeInstall: HarnessInstall = {
+    id: 'claude-code',
+    binPath: '/bin/true',
+    installRoot: '/tmp',
+    version: null,
+  };
+  const noopLog = { info: () => {}, warn: () => {}, error: () => {} };
+
+  it('does not post a chat message for output that arrives after the session was closed', async () => {
+    const user = await makeUser('ada');
+    const conversation = await ConversationModel.create({
+      type: 'dm',
+      memberIds: [user._id],
+      createdBy: user._id,
+      dmKey: makeDmKey(String(user._id), String(new Types.ObjectId())),
+    });
+    const session = await AgentSessionModel.create({
+      conversationId: conversation._id,
+      harness: 'claude-code',
+      title: 'Stop-vs-close race',
+      status: 'running',
+      createdBy: user._id,
+    });
+
+    // buildContext is private; this reaches it the same way runTurn() does
+    // internally, without needing a real harness process to drive it.
+    const context = (
+      runtime as unknown as {
+        buildContext: (
+          session: typeof session,
+          install: HarnessInstall,
+          log: typeof noopLog,
+        ) => { say: (text: string) => Promise<void> };
+      }
+    ).buildContext(session, fakeInstall, noopLog);
+
+    // The close wins the race first (as it does in the real EPIPE/close path).
+    await AgentSessionModel.findByIdAndUpdate(session._id, {
+      $set: { status: 'closed', closedAt: new Date(), sandboxPath: null },
+    });
+
+    // The harness's own in-flight output arrives afterward, same as the real
+    // race's timing.
+    await context.say('I could not start: Claude Code exited with code unknown');
+
+    const messages = await MessageModel.find({ conversationId: conversation._id, kind: 'agent_output' });
+    expect(messages).toHaveLength(0);
+  });
+
+  it('still posts normally for a session that has not been closed', async () => {
+    const user = await makeUser('ada');
+    const conversation = await ConversationModel.create({
+      type: 'dm',
+      memberIds: [user._id],
+      createdBy: user._id,
+      dmKey: makeDmKey(String(user._id), String(new Types.ObjectId())),
+    });
+    const session = await AgentSessionModel.create({
+      conversationId: conversation._id,
+      harness: 'claude-code',
+      title: 'Normal output',
+      status: 'running',
+      createdBy: user._id,
+    });
+
+    const context = (
+      runtime as unknown as {
+        buildContext: (
+          session: typeof session,
+          install: HarnessInstall,
+          log: typeof noopLog,
+        ) => { say: (text: string) => Promise<void> };
+      }
+    ).buildContext(session, fakeInstall, noopLog);
+
+    await context.say('Hello from the agent');
+
+    const messages = await MessageModel.find({ conversationId: conversation._id, kind: 'agent_output' });
+    expect(messages).toHaveLength(1);
   });
 });
