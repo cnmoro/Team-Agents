@@ -51,6 +51,34 @@ const PERMISSION_POLICY = {
   doom_loop: 'ask',
 } as const;
 
+/**
+ * Builds the sandbox's `opencode.json` from the (optional) config seeded from
+ * the operator's own OpenCode install, deliberately narrowed to just the
+ * `model` field — see the doc comment on `writeConfig` below for why. Kept as
+ * a standalone pure function so this filtering is unit-testable without a
+ * live sandbox.
+ */
+export function buildSandboxOpencodeConfig(
+  seededRaw: string | null,
+  opencodeModelEnv: string,
+): Record<string, unknown> {
+  let seededModel: string | undefined;
+  if (seededRaw) {
+    try {
+      const existing = JSON.parse(seededRaw) as Record<string, unknown>;
+      if (typeof existing.model === 'string') seededModel = existing.model;
+    } catch {
+      // Unreadable/invalid seeded config: ignore it, start from scratch.
+    }
+  }
+  return {
+    $schema: 'https://opencode.ai/config.json',
+    ...(seededModel ? { model: seededModel } : {}),
+    ...(opencodeModelEnv ? { model: opencodeModelEnv } : {}),
+    permission: PERMISSION_POLICY,
+  };
+}
+
 interface SseEvent {
   id?: string;
   type?: string;
@@ -233,35 +261,38 @@ class OpenCodeRunner implements HarnessRunner {
   /**
    * Writes the permission policy and system guidance into the sandbox home.
    *
-   * Any config seeded from the operator's own OpenCode install is preserved and
-   * only the permission block is replaced. Overwriting it wholesale would throw
-   * away their model and provider choice, leaving the agent on whatever default
-   * the CLI picks.
+   * `harnessRegistry.ts` seeds this file wholesale from the operator's own
+   * `~/.config/opencode/opencode.json` so the sandbox has *some* config to
+   * start from (see its `AUTH_SEEDS` comment). Only the operator's model
+   * choice is worth inheriting from it — losing that would leave the agent on
+   * whatever default model the CLI picks, which can be one the operator's
+   * account has no access to (an opaque upstream 503 on the first prompt).
+   * Everything else in that file is the *operator's own machine's* settings,
+   * not something that should silently apply to every agent every user of
+   * this app runs: third-party `plugin` entries would execute arbitrary code
+   * inside every sandbox, and knobs like `compaction.auto` would silently
+   * change how every session behaves under a long conversation. This is the
+   * same reasoning `AUTH_SEEDS`'s comment already gives for deliberately
+   * *not* copying Claude Code's `settings.json` ("would drag their hooks,
+   * MCP servers, and CLAUDE.md into every agent run") — it just wasn't
+   * applied here yet. `permission` is always overwritten regardless, so it
+   * doesn't need this treatment.
    */
   private async writeConfig(): Promise<void> {
     const configDir = path.join(this.ctx.sandbox.homeDir, '.config', 'opencode');
     await mkdir(configDir, { recursive: true });
     const configPath = path.join(configDir, 'opencode.json');
 
-    let existing: Record<string, unknown> = {};
+    let seededRaw: string | null = null;
     try {
-      existing = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, unknown>;
+      seededRaw = await readFile(configPath, 'utf8');
     } catch {
       // No seeded config, or it is unreadable: start from scratch.
     }
 
     await writeFile(
       configPath,
-      JSON.stringify(
-        {
-          $schema: 'https://opencode.ai/config.json',
-          ...existing,
-          ...(config.opencodeModel ? { model: config.opencodeModel } : {}),
-          permission: PERMISSION_POLICY,
-        },
-        null,
-        2,
-      ),
+      JSON.stringify(buildSandboxOpencodeConfig(seededRaw, config.opencodeModel), null, 2),
     );
     // Project-level guidance is the documented way to steer OpenCode's agent.
     const workDir = this.ctx.repoPaths[0]
