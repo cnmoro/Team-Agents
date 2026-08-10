@@ -166,6 +166,20 @@ export function sandboxEnv(extra: Record<string, string> = {}): Record<string, s
     TERM: 'dumb',
     NO_COLOR: '1',
     CI: '1',
+    // Every sandboxed process gets a working `git`/`ssh` by default, not just
+    // the initial provisioning clone: without this, an agent's own later
+    // `git push`/`fetch` (run via its own Bash tool, a separate spawn from
+    // provisionRepository's) falls back to plain `ssh`, which also parses the
+    // *system* `/etc/ssh/ssh_config` — on modern Debian/Ubuntu that `Include`s
+    // a root-owned file bubblewrap's unprivileged user namespace makes appear
+    // owned by nobody, so ssh rejects it with "Bad owner or permissions"
+    // before authentication even starts (see gitProvisioner.ts's
+    // `sshConfigPath()` doc comment for the full mechanism). Pinning `-F` here
+    // too closes that gap for every sandboxed command, not just provisioning.
+    // `gitProvisioner.ts`'s `gitEnv()` still owns the askpass (passphrase)
+    // variant, passed as `extra` below, which intentionally overrides this.
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_SSH_COMMAND: `ssh -F ${SANDBOX_HOME}/.ssh/config -o BatchMode=yes -o StrictHostKeyChecking=accept-new`,
     ...extra,
   };
   for (const key of Object.keys(env)) if (!env[key]) delete env[key];

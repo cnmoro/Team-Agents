@@ -18,7 +18,7 @@ import { badRequest, notFound } from '../services/errors.js';
 import { createMessage } from '../services/messageService.js';
 import { serializeAgentSession } from '../services/serialize.js';
 import { destroySandbox, ensureSandbox } from '../sandbox/sandboxManager.js';
-import { provisionRepository, redactSecrets, repoDirName } from './gitProvisioner.js';
+import { ensureSshConfigFile, provisionRepository, redactSecrets, repoDirName } from './gitProvisioner.js';
 import { resolveHarness } from './harnessRegistry.js';
 import { runtime } from './runtime.js';
 import { hub } from '../realtime/hub.js';
@@ -110,6 +110,12 @@ async function provisionAndRun(
     session.sandboxPath = sandbox.root;
     await session.save();
 
+    // sandboxEnv() now pins every sandboxed process's GIT_SSH_COMMAND at
+    // `-F ~/.ssh/config` unconditionally (not just provisioning git calls),
+    // so that file must exist even when this session has no repository bound
+    // yet (e.g. the agent clones something ad hoc via its own Bash tool).
+    await ensureSshConfigFile(sandbox);
+
     await runtime.emit(session, {
       type: 'status',
       summary: `Sandbox ready at ${sandbox.root}`,
@@ -181,7 +187,10 @@ export async function promptExistingAgent(
 
   // The sandbox may have been created by an earlier server process; recreating
   // the directory handles is cheap and idempotent.
-  await ensureSandbox(agentSessionId, session.harness as HarnessId);
+  const sandbox = await ensureSandbox(agentSessionId, session.harness as HarnessId);
+  // See the matching comment in provisionAndRun(): sandboxEnv()'s GIT_SSH_COMMAND
+  // always points `-F` at this file, so it must exist before the harness runs.
+  await ensureSshConfigFile(sandbox);
 
   const transcript = await buildContextTranscript(
     String(session.conversationId),

@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { copyFile, mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { HarnessId } from '@teamagents/shared';
@@ -180,7 +181,26 @@ export async function spawnInSandbox(
   options: SpawnOptions,
 ): Promise<ChildProcessWithoutNullStreams> {
   const probe = await probeBubblewrap();
-  const env = sandboxEnv(options.env);
+  // If any bound SSH credential needed a passphrase, `installCredential()`
+  // (gitProvisioner.ts) left an askpass helper script behind for the life of
+  // the sandbox. sandboxEnv()'s default GIT_SSH_COMMAND uses BatchMode=yes,
+  // which would silently defeat that helper for every command *after* the
+  // initial clone (BatchMode disables all interactive-style prompts,
+  // including the SSH_ASKPASS handshake) — so a passphrase-protected key's
+  // clone would succeed but the agent's own later `git push`/`fetch` would
+  // fail with "Permission denied (publickey)" again. Detect the helper and
+  // switch every command in this sandbox to the askpass-compatible variant,
+  // the same one gitEnv(true) uses for provisioning.
+  const askpassPath = path.join(sandbox.homeDir, '.ssh', 'askpass');
+  const askpassEnv: Record<string, string> = existsSync(askpassPath)
+    ? {
+        SSH_ASKPASS: `${SANDBOX_HOME}/.ssh/askpass`,
+        SSH_ASKPASS_REQUIRE: 'force',
+        DISPLAY: ':0',
+        GIT_SSH_COMMAND: `ssh -F ${SANDBOX_HOME}/.ssh/config -o StrictHostKeyChecking=accept-new`,
+      }
+    : {};
+  const env = sandboxEnv({ ...askpassEnv, ...options.env });
 
   if (!probe.available) {
     if (config.sandboxEnabled) {
