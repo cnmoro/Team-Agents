@@ -6,6 +6,7 @@ import type { QuestionOption } from '@teamagents/shared';
 import { config } from '../../config.js';
 import { spawnInSandbox, SANDBOX_WORK } from '../../sandbox/sandboxManager.js';
 import { summarize } from '../ndjson.js';
+import { terminateChild } from '../processUtils.js';
 import { CHAT_GUIDANCE, type AdapterContext, type HarnessAdapter, type HarnessRunner } from '../types.js';
 
 /**
@@ -670,8 +671,7 @@ class OpenCodeRunner implements HarnessRunner {
     this.child = null;
     this.baseUrl = null;
     if (!child) return;
-    child.kill('SIGTERM');
-    setTimeout(() => child.kill('SIGKILL'), 5000).unref();
+    await terminateChild(child);
   }
 }
 

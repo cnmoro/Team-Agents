@@ -5,6 +5,7 @@ import type { QuestionOption } from '@teamagents/shared';
 import { config } from '../../config.js';
 import { spawnInSandbox, SANDBOX_WORK } from '../../sandbox/sandboxManager.js';
 import { NdjsonReader, ndjsonLine, summarize } from '../ndjson.js';
+import { terminateChild } from '../processUtils.js';
 import { CHAT_GUIDANCE, type AdapterContext, type HarnessAdapter, type HarnessRunner } from '../types.js';
 
 /**
@@ -580,8 +581,7 @@ class CodexRunner implements HarnessRunner {
     this.child = null;
     if (!child) return;
     child.stdin.end();
-    child.kill('SIGTERM');
-    setTimeout(() => child.kill('SIGKILL'), 5000).unref();
+    await terminateChild(child);
   }
 }
 

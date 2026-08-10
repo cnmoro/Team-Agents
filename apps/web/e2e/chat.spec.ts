@@ -255,8 +255,13 @@ test.describe('chat', () => {
     await login(page, ada);
     await openConversation(page, alan.displayName);
 
+    // A real, CRC-valid 10x5 PNG (a previous fixture here had a corrupted
+    // IHDR/IDAT CRC — `file`/PIL don't validate CRCs so it still looked like
+    // a legitimate PNG to tooling, but every real browser's decoder rejects
+    // it, so the `<img>` never actually rendered; this test only ever
+    // checked that an `<img>` element existed, not that it decoded).
     const png = Buffer.from(
-      'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAFCAYAAABirU3bAAAAFElEQVR42mNk+M9QzzCKQTEIAgAmAgMBSKcvVwAAAABJRU5ErkJggg==',
+      'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAFCAYAAAB8ZH1oAAAAE0lEQVR4nGP4z8DwnxjMMAQUAgDlDGOdi6QvVgAAAABJRU5ErkJggg==',
       'base64',
     );
     await page.locator('input[type="file"]').setInputFiles({
@@ -274,6 +279,42 @@ test.describe('chat', () => {
     await expect(page.locator('.ta-lightbox')).toBeVisible({ timeout: 5_000 });
     await page.locator('.ta-lightbox').click({ position: { x: 5, y: 5 } });
     await expect(page.locator('.ta-lightbox')).toHaveCount(0);
+  });
+
+  test('an attachment the server tagged as an image but the browser cannot decode falls back to a download card', async ({
+    page,
+  }) => {
+    // `isImage` is decided server-side purely from the upload's declared
+    // Content-Type, not by sniffing the bytes (see apps/server/src/routes/
+    // files.ts's IMAGE_MIME check) — so a client that lies about the type
+    // (or a real image format/corruption the browser can't decode) produces
+    // a message with an `image` block whose bytes are not actually
+    // renderable. Before the fix, MessageBlocks.tsx rendered a bare `<img>`
+    // with no `onError` handling: the element stayed in the DOM as a
+    // permanently broken icon, with no filename, no size, and no way to
+    // download or otherwise identify the attachment. It must instead fall
+    // back to the same download-card treatment a `file` block gets.
+    await apiAs(ada, 'POST', '/api/conversations', {
+      type: 'group',
+      memberIds: [alan.id],
+      name: `MimeLie ${Date.now()}`,
+    });
+    await login(page, ada);
+    await openConversation(page, /^MimeLie /);
+
+    await page.locator('input[type="file"]').setInputFiles({
+      name: 'totally-a-photo.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from('This is plain text pretending to be a PNG image via a lying Content-Type.'),
+    });
+    await expect(page.getByText(/totally-a-photo\.png/)).toBeVisible({ timeout: 20_000 });
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+
+    // No broken `<img>` left behind, and the file is still fully identifiable
+    // and retrievable exactly like a real non-image attachment would be.
+    await expect(page.getByText(/totally-a-photo\.png/).first()).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole('button', { name: /Download/ }).first()).toBeVisible();
+    await expect(page.locator('img.ta-image')).toHaveCount(0);
   });
 
   test('uploads several files at once and sends them all as one message', async ({ page }) => {

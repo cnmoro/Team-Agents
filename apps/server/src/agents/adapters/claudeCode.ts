@@ -3,6 +3,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { QuestionOption } from '@teamagents/shared';
 import { spawnInSandbox, SANDBOX_WORK } from '../../sandbox/sandboxManager.js';
 import { NdjsonReader, ndjsonLine, summarize } from '../ndjson.js';
+import { terminateChild } from '../processUtils.js';
 import { CHAT_GUIDANCE, type AdapterContext, type HarnessAdapter, type HarnessRunner } from '../types.js';
 
 /**
@@ -420,9 +421,8 @@ class ClaudeCodeRunner implements HarnessRunner {
     this.child = null;
     if (!child) return;
     child.stdin.end();
-    child.kill('SIGTERM');
     // SIGTERM runs the CLI's shutdown hooks; escalate only if it hangs.
-    setTimeout(() => child.kill('SIGKILL'), 5000).unref();
+    await terminateChild(child);
   }
 }
 

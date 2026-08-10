@@ -63,17 +63,11 @@ export function MessageBlocks({
           }
           if (block.type === 'code') return <CodeBlockView key={key} block={block} />;
           if (block.type === 'image') {
-            const size = displaySize(block.width, block.height);
             return (
-              <img
+              <ImageOrFallback
                 key={key}
-                className="ta-image"
-                src={api.fileUrl(block.fileId)}
-                alt={block.filename}
-                width={size?.width}
-                height={size?.height}
-                loading="lazy"
-                onClick={() => setLightbox({ url: api.fileUrl(block.fileId), alt: block.filename })}
+                block={block}
+                onOpen={() => setLightbox({ url: api.fileUrl(block.fileId), alt: block.filename })}
               />
             );
           }
@@ -92,6 +86,42 @@ export function MessageBlocks({
         </button>
       ) : null}
     </>
+  );
+}
+
+/**
+ * Renders an `image` block as an actual `<img>`, but falls back to the same
+ * download-card treatment as a `file` block if the browser can't decode it.
+ *
+ * This is reachable without anything malicious: `isImage` is decided
+ * server-side purely from the upload's declared `Content-Type`, not by
+ * sniffing the bytes, so a mislabeled upload (or an image format the
+ * server's dimension reader doesn't recognize but the browser also can't
+ * render) would otherwise leave a permanently broken `<img>` icon with no
+ * filename, size, or way to retrieve the file at all.
+ */
+function ImageOrFallback({
+  block,
+  onOpen,
+}: {
+  block: Extract<MessageBlock, { type: 'image' }>;
+  onOpen: () => void;
+}): ReactNode {
+  const [failed, setFailed] = useState(false);
+  if (failed) return <FileCard block={{ ...block, type: 'file' }} />;
+
+  const size = displaySize(block.width, block.height);
+  return (
+    <img
+      className="ta-image"
+      src={api.fileUrl(block.fileId)}
+      alt={block.filename}
+      width={size?.width}
+      height={size?.height}
+      loading="lazy"
+      onClick={onOpen}
+      onError={() => setFailed(true)}
+    />
   );
 }
 
