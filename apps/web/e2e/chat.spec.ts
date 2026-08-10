@@ -474,6 +474,46 @@ test.describe('chat', () => {
     await alanContext.close();
   });
 
+  test('deleting a message that is currently selected as agent context clears the selection', async ({
+    page,
+  }) => {
+    const conversation = await apiAs<{ id: string }>(ada, 'POST', '/api/conversations', {
+      type: 'group',
+      memberIds: [alan.id],
+      name: `Delete-selected-context ${Date.now()}`,
+    });
+
+    await login(page, ada);
+    await openConversation(page, /^Delete-selected-context /);
+
+    await sendMessage(page, 'a fact worth remembering');
+    await expect(messageText(page, 'a fact worth remembering').first()).toBeVisible({ timeout: 20_000 });
+
+    // Select it as agent context.
+    await page.getByRole('button', { name: 'Select messages' }).click();
+    await page.locator('.ta-message-row').filter({ hasText: 'a fact worth remembering' }).first().click();
+    await expect(page.getByText('1 message selected as agent context')).toBeVisible();
+
+    // Delete the very message that is selected via a concurrent request (the
+    // message's own delete affordance is hidden while selection mode has
+    // taken over click handling, so a real race — another tab, or the author
+    // changing their mind right as a second click lands — has to go through
+    // the API exactly like this). The composer must not keep claiming a
+    // message is still selected once it no longer exists.
+    const messageId = (
+      await apiAs<{ items: Array<{ id: string; blocks: Array<{ text?: string }> }> }>(
+        ada,
+        'GET',
+        `/api/conversations/${conversation.id}/messages`,
+      )
+    ).items.find((item) => item.blocks.some((block) => block.text === 'a fact worth remembering'))?.id;
+    expect(messageId).toBeTruthy();
+    await apiAs(ada, 'DELETE', `/api/messages/${messageId}`);
+
+    await expect(messageText(page, 'a fact worth remembering')).toHaveCount(0, { timeout: 20_000 });
+    await expect(page.getByText('1 message selected as agent context')).toHaveCount(0);
+  });
+
   test('dialogs can be closed with the close button', async ({ page }) => {
     await login(page, ada);
 

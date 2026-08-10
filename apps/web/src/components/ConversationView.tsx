@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { AvatarGroup, AvatarGroupOverflow } from '@astryxdesign/core/AvatarGroup';
 import { Avatar } from '@astryxdesign/core/Avatar';
 import { Badge } from '@astryxdesign/core/Badge';
@@ -92,6 +92,26 @@ export function ConversationView(): ReactNode {
     setSelectedIds(new Set());
     anchorRef.current = null;
   }, []);
+
+  // A message can be deleted (by its author, in another tab, or by a live
+  // socket event) while it is still held as a selected agent-context
+  // message. Without this, the composer's "N selected" banner and the
+  // eventual send would silently keep counting a message that no longer
+  // exists — prune the selection whenever the underlying message list
+  // changes so it always reflects what can actually be sent as context.
+  useEffect(() => {
+    setSelectedIds((current) => {
+      if (current.size === 0) return current;
+      const liveIds = new Set(messages.items.map((message) => message.id));
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of current) {
+        if (liveIds.has(id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : current;
+    });
+  }, [messages.items]);
 
   const exitSelectionMode = useCallback(() => {
     setIsSelecting(false);
